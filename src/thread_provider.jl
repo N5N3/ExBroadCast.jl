@@ -6,8 +6,8 @@ function get_provider()
     provider = @load_preference("provider", default_provider)
 
     # Ensure the provider matches one of the ones we support
-    if provider ∉ ("Threads", "CheapThreads")
-        @error("Invalid Threads setting \"$(provider)\"; valid settings include [\"Threads\", \"CheapThreads\"], defaulting to \"Threads\"")
+    if provider ∉ ("Threads", "Polyester")
+        @error("Invalid Threads setting \"$(provider)\"; valid settings include [\"Threads\", \"Polyester\"], defaulting to \"Threads\"")
         provider = default_provider
     end
     return provider
@@ -18,12 +18,12 @@ const threads_provider = get_provider()
 
 """
     set_provider!(provider; export_prefs::Bool = false)
-Convenience wrapper for setting the Threads provider.  Valid values include `"Threads"`, `"CheapThreads"`.
+Convenience wrapper for setting the Threads provider.  Valid values include `"Threads"`, `"Polyester"`.
 Also supports `Preferences` sentinel values `nothing` and `missing`; see the docstring for
 `Preferences.set_preferences!()` for more information on what these values mean.
 """
 function set_provider!(provider; export_prefs::Bool = false)
-    if provider !== nothing && provider !== missing && provider ∉ ("Threads", "CheapThreads")
+    if provider !== nothing && provider !== missing && provider ∉ ("Threads", "Polyester")
         throw(ArgumentError("Invalid provider value '$(provider)'"))
     end
     set_preferences!(@__MODULE__, "provider" => provider; export_prefs, force = true)
