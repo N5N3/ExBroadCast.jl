@@ -18,23 +18,18 @@ end
 @inline function tab_copy(bc::Broadcasted{Style{Tuple}})
     dim = axes(bc)
     length(dim) == 1 || throw(DimensionMismatch("tuple only supports one dimension"))
+    ElType = typeof(bc[1])
+    ElType <: Tuple{Any,Vararg{Any}} && Base.isconcretetype(ElType) || 
+        throw("$ElType is not a legal return type for @tab!")
+    @inline maketuple(x, y) = tuple(x, y...)
+    @inline getind(k) = @inbounds _broadcast_getindex(bc, k)
     N = length(dim[1])
-    temp = ntuple(k -> @inbounds(_broadcast_getindex(bc, k)), Val(N))
-    ElType = eltype(temp)
-    ElType <: Tuple{Any,Any,Vararg{Any}} && Base.isconcretetype(ElType) ||
-        error("Inlegal return type!")
-    M = length(ElType.parameters)
-    return ntuple(Val(M)) do i
-        map(x->getfield(x,i),temp)
-    end
-end
-@inline function tab_copy(bc::Broadcasted)
-    dest, dest′ = toa_similar(bc)
-    copyto!(dest′, bc)
-    dest
+    N <= 16 && return mapfoldr(getind, (x, y) -> maketuple.(x, y), ntuple(identity,Val(N)))
+    mapfoldr(getind, (x, y) -> maketuple.(x, y), dim[1])
 end
 
-@inline function copyto!(dest::TupleDummy, bc::Broadcasted{Nothing})
-    getdevice(dest) == AnyGPU && return gpu_copyto!(dest, bc)
-    invoke(copyto!, Tuple{AbstractArray, Broadcasted{Nothing}}, dest, bc)
+@inline function tab_copy(bc::Broadcasted)
+    dest = toa_similar(bc)
+    copyto!(dest, bc)
+    parent(dest)
 end

@@ -39,7 +39,7 @@ end
 @inline mtb_copyto!(dest::AbstractArray, bc::FilledBC) = copyto!(dest, bc)
 
 @inline function mtb_copyto!(dest::AbstractArray, bc::Broadcasted{Nothing})
-    getdevice(dest) == AnyGPU && return gpu_copyto!(dest, bc)
+    device(dest) == AnyGPU && return gpu_copyto!(dest, bc)
     axes(dest) == axes(bc) || throwdm(axes(dest), axes(bc))
     if bc.f === identity && bc.args isa Tuple{AbstractArray}
         A = bc.args[1]

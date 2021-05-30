@@ -4,8 +4,7 @@
   *  `@mtb`: MultiThread Broadcast --- perform broadcast with multiple threads. 
   *  `@mtab`: `@mtb` + `@tab`
 * Add support for broadcast of `CuArray` wrapped by `OffsetArray` and `StructArray`.
-* Make Generator broadcasted lazily (experiment)
-* Make scalar math broadcast non-lazy (experiment)
+* use `Lazy(::Generator)` to avoid collect before broadcast. (i.e. sum.(Lazy(eachcol(a))))
 ## Macros' Usage
 1. `@tab` : support `CuArray`, `OffsetArray`, `Tuple`    
 ```julia
@@ -42,7 +41,6 @@ julia> Threads.nthreads()
 
 ## Note
 1. `@mtab` only save some compile cost.
-2. `experiment` function is default off. Use ExBroadcast.set_experiment!("on" or "off") to control.
 
 ## ToDo
 ~~1. use `MacroTools.jl` for macro.jl.~~ done  

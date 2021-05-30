@@ -32,29 +32,20 @@ const Template_lzb = IdDict(
 using MacroTools
 # use @goto and @label to repalce Core.GotoNode Expr(:gotoifnot)
 function correctgoto!(code)
+    function get_tag(tar)
+        if Meta.isexpr(code[tar], :block) #target line has been repalced
+            tag = code[tar].args[1].args[1]
+        else
+            tag = gensym(:𝐠𝐨𝐭𝐨𝐧𝐨𝐝𝐞)
+            code[tar] = Expr(:block, Expr(:symboliclabel, tag), code[tar])
+        end
+        tag
+    end
     @inbounds for k in eachindex(code)
-        if Meta.isexpr(code[k], :gotoifnot)
-            condition, tar = code[k].args
-            if Meta.isexpr(code[tar], :block) #target line has been repalced
-                tag = code[tar].args[1].args[1]
-                code[k] =
-                    Expr(:if, condition, Expr(:block), Expr(:symbolicgoto, tag))
-            else
-                tag = gensym(:𝐠𝐨𝐭𝐨𝐧𝐨𝐝𝐞)
-                code[tar] = Expr(:block, Expr(:symboliclabel, tag), code[tar])
-                code[k] =
-                    Expr(:if, condition, Expr(:block), Expr(:symbolicgoto, tag))
-            end
-        elseif code[k] isa Core.GotoNode #target line has been repalced
-            tar = code[k].label
-            if Meta.isexpr(code[tar], :block)
-                tag = code[tar].args[1].args[1]
-                code[k] = Expr(:symbolicgoto, tag)
-            else
-                tag = gensym(:𝐠𝐨𝐭𝐨𝐧𝐨𝐝𝐞)
-                code[tar] = Expr(:block, Expr(:symboliclabel, tag), code[tar])
-                code[k] = Expr(:symbolicgoto, tag)
-            end
+        if code[k] isa Core.GotoIfNot
+            code[k] = Expr(:if, code[k].cond, Expr(:block), Expr(:symbolicgoto, get_tag(code[k].dest)))
+        elseif code[k] isa Core.GotoNode 
+            code[k] = Expr(:symbolicgoto, get_tag(code[k].label))
         end
     end
     code
@@ -74,68 +65,21 @@ function replacecall(ex::Expr, temps::AbstractDict)
 end
 # replace return
 replacereturn(ex, args...) = ex
-function replacereturn(ex::Expr, flag::Base.RefValue{Bool}, Result, EndPoint)
-    @inbounds if ex.head === :return
-        ex′₁ = Expr(:local, Expr(:(=), Result, ex.args[1]))
-        ex′₂ = Expr(:symbolicgoto, EndPoint)
-        flag[] = true
-        return Expr(:block, ex′₁, ex′₂)
-    elseif ex.head === :call && ex.args[1] === :𝐫𝐞𝐭𝐮𝐫𝐧
-        return Expr(:return, ex.args[2])
-    end
+replacereturn(ex::Core.ReturnNode, Result, EndPoint) = 
+    Expr(:block, :(local $Result = $(ex.val)), Expr(:symbolicgoto, EndPoint))
+function replacereturn(ex::Expr, Result, EndPoint)
+    ex.head === :call && ex.args[1] === :𝐫𝐞𝐭𝐮𝐫𝐧 && return :(return $(ex.args[2]))
     ex
 end
 
-keepreturn(ex) = ex
-function keepreturn(ex::Expr)
-    if ex.head === :return
-        @inbounds return Expr(:call, :𝐫𝐞𝐭𝐮𝐫𝐧, ex.args[1])
-    end
+function keepreturn(ex)
+    Meta.isexpr(ex, :return) && return Expr(:call, :𝐫𝐞𝐭𝐮𝐫𝐧, ex.args[1])
     ex
 end
 
-addeq(ex, args...) = ex
-addeq(ex::Symbol, syms::Symbol) = _addeq(ex, syms)
-addeq(ex::Core.Slot, syms::Symbol) = _addeq(ex, syms)
-addeq(ex::GlobalRef, syms::Symbol) = _addeq(ex, syms)
-function addeq(ex::Expr, syms::Symbol)
-    if ex.head === :call && ex.args[1] !== :𝐫𝐞𝐭𝐮𝐫𝐧
-        return _addeq(ex, syms)
-    end
-    ex
-end
-_addeq(ex, syms) = Expr(:local, Expr(:(=), syms, ex))
-
-if VERSION >= v"1.6.0-rc1"
-    catchreturn(x) = x.val
-else
-    catchreturn(x) = x.args[1]
-end
-
-function combine_expr(code::Array{Any,1}, exstart, exend)
-    exblock = Expr(:block)
-    if ~isnothing(exstart)
-        push!(exblock.args, exstart)
-    end
-    for i = 1:length(code)-1
-        @inbounds push!(exblock.args, code[i])
-    end
-    if ~isnothing(exend)
-        push!(exblock.args, exend)
-    end
-    @inbounds final = catchreturn(code[end])
-    exblock, final
-end
-
-function finaladd(exblock, flag, final, Result, EndPoint)
-    if flag
-        push!(exblock.args, Expr(:local, Expr(:(=), Result, final)))
-        push!(exblock.args, Expr(:symboliclabel, EndPoint))
-        push!(exblock.args, Result)
-    else
-        push!(exblock.args, final)
-    end
-    exblock
+function addeq(ex, syms::Symbol)
+    Meta.isexpr(ex, :call) || ex isa Symbol || ex isa Core.Slot || ex isa GlobalRef || return ex
+    :(local $syms = $ex)
 end
 
 function lowerhack(
@@ -150,22 +94,20 @@ function lowerhack(
     ci.head === :error && error(ci.args[1])
     code = first(ci.args).code
     Slots = first(ci.args).slotnames
-    SSAs = [gensym(:𝐭𝐞𝐦𝐩𝐯𝐚𝐫) for _ ∈ eachindex(code)]
-    EndPoint = gensym(:𝐞𝐧𝐝𝐩𝐨𝐢𝐧𝐭)
-    Result = gensym(:𝐫𝐞𝐬𝐮𝐥𝐭)
+    SSAs = [gensym(:𝐭𝐞𝐦𝐩𝐯𝐚𝐫) for _ in eachindex(code)]
+    Result, EndPoint = gensym(:𝐫𝐞𝐬𝐮𝐥𝐭), gensym(:𝐞𝐧𝐝𝐩𝐨𝐢𝐧𝐭)
     code .= addeq.(code, SSAs)
-    code = correctgoto!(code)
-    exblock, final = combine_expr(code, exstart, exend)
-    final′ = replacetemp(final, SSAs, Slots)
-    needfinal = Ref(false)
+    code .= replacereturn.(code, Result, EndPoint)
+    exblock = Expr(:block, correctgoto!(code)...)
     exblock = MacroTools.postwalk(exblock) do x
         x = replacetemp(x, SSAs, Slots)
         x = replacecall(x, temps)
-        x = replacereturn(x, needfinal, Result, EndPoint)
         x = MacroTools.flatten1(x)
     end
     ## final add
-    finaladd(exblock, needfinal[], final′, Result, EndPoint)
+    exblock.args[end] = Expr(:symboliclabel, EndPoint)
+    push!(exblock.args, Result)
+    exblock
 end
 
 

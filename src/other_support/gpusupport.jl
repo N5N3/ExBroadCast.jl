@@ -3,27 +3,25 @@ import GPUArrays: BroadcastGPUArray, backend,
                 launch_heuristic, launch_configuration, gpu_call,
                 linear_index, global_size, @cartesianidx
 const BGA = BroadcastGPUArray
-getdevice(::BGA) = AnyGPU
+device(::BGA) = AnyGPU
 
 # in-place soa support
 backend(A::TupleDummy) = backends(parent(A))
-backends(nt::NamedTuple) = backends(values(nt))
-backends(t::Tuple) = begin
-    bes = backend.(t)
-    be = first(bes)
-    all(==(be), Base.tail(bes)) || throw("device error")
-    be
-end
+@inline backends(nt::NamedTuple) = values(nt) |> backends
+@inline backends(t::Tuple) = getsame(backend, t...)
 
 # Adapt fix
 import Adapt: adapt_structure, adapt
-function adapt_structure(to, td::TupleDummy{T,N,S,L,SS}) where {T,N,S,L,SS}
-    newfieldarrays = map(x -> adapt(to, x), td.arrays)
-    TupleDummy{T,N,typeof(newfieldarrays),L,SS}(newfieldarrays,td.ax)
+function adapt_structure(to, td::TupleDummy{T,N,L}) where {T,N,L}
+    newarrays = map(x -> adapt(to, x), td.arrays)
+    TupleDummy{T,N,L}(newarrays,td.ax)
+end
+@inline function copyto!(dest::TupleDummy, bc::Broadcasted{Nothing})
+    device(dest) == AnyGPU && return gpu_copyto!(dest, bc)
+    invoke(copyto!, Tuple{AbstractArray, Broadcasted{Nothing}}, dest, bc)
 end
 
-#math How to make these work?
-
+#math: override sincos and sincospi 7 times faster.
 using GPUCompiler
 @static if isdefined(Base.Experimental, Symbol("@overlay"))
     Base.Experimental.@MethodTable(method_table)
@@ -80,26 +78,29 @@ end
 ## AbstractWrapper
 import Base: print_array, show
 function map_show_copy(WrapperType::Symbol) 
-    @eval trycollect(X::$WrapperType) = getdevice(X) == AnyGPU ? adapt(Array,X) : X
+    @eval trycollect(X::$WrapperType) = device(X) == AnyGPU ? adapt(Array,X) : X
     for dispfun in (:print_array, :show)
         @eval $dispfun(io::IO, X::$WrapperType{T,N}) where {T,N} = 
             invoke($dispfun, Tuple{IO, AbstractArray{T,N}}, io, trycollect(X))
     end
 
     @eval @inline copyto!(dest::$WrapperType, bc::Broadcasted{Nothing}) = begin
-        getdevice(dest) == AnyGPU && return gpu_copyto!(dest, bc)
+        device(dest) == AnyGPU && return gpu_copyto!(dest, bc)
         invoke(copyto!, Tuple{AbstractArray, Broadcasted{Nothing}}, dest, bc)
     end
+
+    @eval BroadcastStyle(::Type{Base.RefValue{AT}}) where AT<:$WrapperType =
+        BroadcastStyle(AT) |> forcedim0
 end
 
-import Base.Broadcast: BroadcastStyle
-
+forcedim0(x) = x
+forcedim0(::Style) where Style <: AbstractArrayStyle = Val(0) |> Style
 
 @require OffsetArrays = "6fe1bfb0-de20-5000-8ca7-80f57d26f881" begin
     import .OffsetArrays: OffsetArray
     ## general
-    getdevice(A::OffsetArray) = getdevice(parent(A))
-    backend(A::OffsetArray) = backend(parent(A))
+    device(A::OffsetArray) = parent(A) |> device
+    backend(A::OffsetArray) = parent(A) |> backend
     ## adapt_structure has been defined in OffsetArrays.jl
     map_show_copy(:OffsetArray)
     ## unique
@@ -110,11 +111,13 @@ end
 @require StructArrays = "09ab397b-f2b6-538f-b94a-2f83cf4a842a" begin
     import .StructArrays: StructArray, StructArrayStyle, components
     ## general
-    getdevice(A::StructArray) = getdevices(components(A))
-    backend(A::StructArray) = backends(components(A))
+    device(A::StructArray) = components(A) |> devices
+    backend(A::StructArray) = components(A) |> backends
     ## adapt_structure has been defined in StructArrays.jl
     map_show_copy(:StructArray)
     # unique
+    forcedim0(::StructArrayStyle{Style}) where Style = StructArrayStyle{typeof(forcedim0(Style()))}()
+
     function Base.similar(bc::Broadcasted{StructArrayStyle{S}}, ::Type{ElType}) where {S,ElType}
         bc′ = convert(Broadcasted{S}, bc)
         if isstructtype(ElType)

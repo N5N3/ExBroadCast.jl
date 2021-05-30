@@ -24,7 +24,7 @@ include("macro_kernal\\tab.jl")
 include("macro_kernal\\mtab.jl")
 include("macro.jl")
 
-include("experiment\\modified_base.jl")
+# include("experiment\\modified_base.jl")
 
 using Requires
 @init @require CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba" include("other_support\\gpusupport.jl")
