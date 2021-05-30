@@ -98,18 +98,17 @@ const bitcache_chunks_bits = 6
     mtb_call(broadcast_kernel, Iˢs)
     dest
 end
-
+using Polyester
 ## mtb_call
 @static if threads_provider == "Polyester"
-    using Polyester
     function mtb_call(
         @nospecialize(kernal::Function),
         inds::AbstractRange,
     )
         len = length(inds)
         if len > 1
-            @batch for tid in Base.OneTo(len)
-                @inbounds kernal(inds[tid])
+            @batch for tid in eachindex(inds)
+                kernal(inds[tid])
             end
         else
             kernal(:)

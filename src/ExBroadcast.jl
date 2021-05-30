@@ -1,6 +1,5 @@
 module ExBroadcast
 
-using CheapThreads
 import Base.Broadcast: copyto!, broadcasted, Broadcasted
 
 export @mtb, @tab, @mtab, @lzb
