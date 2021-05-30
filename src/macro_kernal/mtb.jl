@@ -100,7 +100,8 @@ const bitcache_chunks_bits = 6
 end
 
 ## mtb_call
-@static if threads_provider == "CheapThreads"
+@static if threads_provider == "Polyester"
+    using Polyester
     function mtb_call(
         @nospecialize(kernal::Function),
         inds::AbstractRange,
