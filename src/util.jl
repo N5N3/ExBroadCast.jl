@@ -1,7 +1,7 @@
 export Lazy, eachdim′, eachcol′, eachrow′, eachslice′
 # getsame
 @inline getsame(f::F, x) where F = f(x)
-@inline getsame(f::F, x, y, zs...) where F = begin 
+@inline getsame(f::F, x, y, zs...) where F = begin
     f(x) == getsame(f, y, zs...) || throw(ArgumentError("inputs with different $f"))
     f(x)
 end
@@ -39,7 +39,7 @@ import Base.Broadcast:  ischunkedbroadcast, chunkedcopyto!, bitcache_size,
                         dumpbitcache, bitcache_chunks
 ## for materialize
 import Base.Broadcast: materialize!, BroadcastStyle, combine_styles, instantiate
-## 
+##
 import Base.Broadcast: broadcastable
 ## TupleDummy
 import Base: size, axes, setindex!, unalias, mightalias, unaliascopy, IndexStyle, parent
@@ -55,7 +55,7 @@ A simplified SoA implementation.
 struct TupleDummy{T,N,L,As,AXs} <: AbstractArray{T,N}
     arrays::As
     ax::AXs      # add this field to avoid repeated Base.OneTo()
-    TupleDummy{T,N,L}(arrays::As, ax::AXs) where {T,N,L,As,AXs} = 
+    TupleDummy{T,N,L}(arrays::As, ax::AXs) where {T,N,L,As,AXs} =
         new{T,N,L,As,AXs}(arrays, ax)
 end
 function TupleDummy(arrays::Tuple{AbstractArray,AbstractArray,Vararg{AbstractArray}}) ## at least 2 outputs
@@ -67,15 +67,14 @@ end
 parent(td::TupleDummy) = td.arrays
 size(td::TupleDummy, args...) = size(td.arrays[1], args...)
 axes(td::TupleDummy) = td.ax
-
-@inline setindex!(td::TupleDummy{T,N,AllLinear}, value::Tuple, ix::Int) where {T,N} =
-    fmap(td.arrays, value) do a, v
-        @inbounds setindex!(a, v, ix)
-    end
-@inline setindex!(td::TupleDummy{T,N,AnyCartesian}, value::Tuple, ixs::Vararg{Int,N}) where {T,N} =
-    fmap(td.arrays, value) do a, v
-        @inbounds setindex!(a, v, ixs...)
-    end
+LTD{N} = TupleDummy{T,N,AllLinear} where T
+Base.IndexStyle(::LTD)  = IndexLinear()
+@inline setindex!(td::LTD, value::Tuple, ix::Int) =
+    fmap((a, v) -> (@inbounds a[ix] = v),td.arrays, value)
+CTD{N} = TupleDummy{T,N,AnyCartesian} where T
+Base.IndexStyle(::CTD)  = IndexCartesian()
+@inline setindex!(td::CTD{N}, value::Tuple, ixs::Vararg{Int,N}) where N =
+    fmap((a, v) -> (@inbounds a[ixs...] = v),td.arrays, value)
 
 @inline unalias(dest::TupleDummy, A::AbstractRange) = A
 @inline unalias(dest::TupleDummy, A::AbstractArray) =
@@ -90,7 +89,7 @@ _similar(bc, T) = similar(bc, T)
 _similar(bc::Broadcasted{<:DefaultArrayStyle}, ::Type{Bool}) = similar(Array{Bool}, axes(bc))
 function toa_similar(bc::Broadcasted)
     ElType = combine_eltypes(bc.f, bc.args)
-    ElType <: Tuple{Any,Vararg{Any}} && Base.isconcretetype(ElType) || 
+    ElType <: Tuple{Any,Vararg{Any}} && Base.isconcretetype(ElType) ||
         throw("$ElType is not a legal return type for @tab!")
     dest = map(T -> _similar(bc, T), tuple(ElType.parameters...))
     TupleDummy{ElType,ndims(bc),AllLinear}(dest, axes(bc))
@@ -125,8 +124,8 @@ Base.size(id::FakeDim{N,S}) where {N,S} = (ntuple(_ -> 1, Val(S - 1))..., size(i
 @propagate_inbounds getindex(id::FakeDim{N,N}, I::Vararg{Int, N}) where N = id.data[I[N]]
 @inline newindex(::FakeDim{N,S}, I::CartesianIndex) where {N,S} = CartesianIndex(ntuple(oneunit,Val(S-1))..., I.I[S:N]...)
 @propagate_inbounds getindex(id::FakeDim{N,S}, I::Vararg{Int, N}) where {N,S} = id.data[I[S:N]...]
-BroadcastStyle(::Type{ID}) where ID <: FakeDim = 
-    ID.parameters[4] <: Tuple ? DefaultArrayStyle{ID.parameters[1]}() : 
+BroadcastStyle(::Type{ID}) where ID <: FakeDim =
+    ID.parameters[4] <: Tuple ? DefaultArrayStyle{ID.parameters[1]}() :
                                 BroadcastStyle(ID.parameters[4])
 
 # Lazy is used to wrap Generator/Productor to avoid collect before broadcast.
@@ -168,4 +167,3 @@ function eachslice′(A::AbstractArray; dim::Val{D}) where D
     inds_after = ntuple(d -> (:), ndims(A) - D)
     Lazy(unsafe_view(A, inds_before..., i, inds_after...) for i in axes(A, D))
 end
-
