@@ -34,7 +34,7 @@ julia> Threads.nthreads()
 * `@mtb` use `CartesianPartition` to seperate the task with dimension > 1
 * `@mtb` will be turned off automately for `CuArray` and `Tuple`
 * `@mtb` assume all elements in the dest array(s) are seperated in the memory and there's no thread safety check.
-* `@mtb` is not tuned for small arrays (It won't fall to single threads version automately). 
+* `@mtb` is not tuned for small arrays (It won't invoke the single thread version automately). 
 * User can change the number of threads by :
    * Call `ExBroadcast.set_num_threads(n)` for global change.
    * Use 2 inputs macro `@mtb n [...]` for local change. (not thread safe)
