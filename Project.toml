@@ -15,6 +15,7 @@ GPUCompiler = "61eb1bfa-7361-4325-ad38-22787b887f55"
 
 [compat]
 julia = "1.6, 1.7"
+Adapt = "3.3.1"
 
 [extras]
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"

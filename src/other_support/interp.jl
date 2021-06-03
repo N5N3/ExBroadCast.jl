@@ -89,17 +89,14 @@ end
     @inline getcoefs(x::WeightedInterp) = parent(x)
     device(x::Union{WeightedInterp, AbstractInterpolation}) = getcoefs(x) |> device
 
-    # for style hack
-    combine_styles(x::Base.RefValue{<:AbstractInterpolation}) = getcoefs(x[]) |> combine_styles |> forcedim0
-
-    # It's your duty to adapt the coefs to the gpu memory
+    # With Adapt v"3.3.1", there's no need to use Ref to force adapt
+    # but I think the style hack is still needed.
     broadcasted(itp::Union{WeightedInterp, AbstractInterpolation}, args...) = begin
         # using Ref on CPU mess up the speed, so we invoke to the general dispatch
-        device(itp) == AnyGPU || return invoke(broadcasted, Tuple{Any, typeof.(args)...}, itp, args...)
-        @inline itpf(itp, args...) = itp(args...) # @inline is needed
-        broadcasted(itpf, Ref(itp), args...)
-        # it works, but the Broadcasted is not displayable
-        # broadcasted(cudaconvert(itp), args...) 
+        args′ = broadcastable.(args)
+        style_hack = getcoefs(itp) |> Ref
+        style = combine_styles(style_hack, args′...)
+        broadcasted(style, itp, args′...)
     end
 
     #make checkbounds work on gpu
