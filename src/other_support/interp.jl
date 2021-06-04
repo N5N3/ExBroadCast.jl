@@ -1,7 +1,8 @@
 import .Interpolations: AbstractInterpolation, AbstractInterpolationWrapper, BSplineInterpolation,
                         LanczosInterpolation, ScaledInterpolation, GriddedInterpolation, MonotonicInterpolation,
                         Extrapolation, itptype, coefficients,  itpinfo, value_weights, WeightedAdjIndex,
-                        allbetween, interp_getindex, WeightedIndex, weightedindex_parts, maybe_weightedindex
+                        allbetween, interp_getindex, WeightedIndex, weightedindex_parts, maybe_weightedindex,
+                        BoundsCheckStyle, _checkbounds
 import Base: @propagate_inbounds
 export UnSafeInterp, preweight
 
@@ -23,25 +24,27 @@ Base.parent(witp::WeightedInterp) = witp.coefs
 unsaled(r::AbstractUnitRange, x) = @lzb x .- first(r) .+ oneunit(eltype(r))
 unsaled(r::AbstractRange, x) = @lzb (x .- first(r)) .* inv(step(r)) .+ oneunit(eltype(r))
 
-fastervec(x) = throw(ArgumentError("preweight only support Array/Number inputs!"))
-fastervec(x::Number) = x
-fastervec(x::AbstractArray) = vec(x)
+@inline getcoefs(x::AbstractInterpolationWrapper) = parent(x) |> getcoefs
+@inline getcoefs(x::AbstractInterpolation) = coefficients(x)
+@inline getcoefs(x::WeightedInterp) = parent(x)
 
 # preweight
 @inline preweight(itp::Extrapolation{T,N}, args::Vararg{Any,N}) where {T,N} =
     throw(ArgumentError("Extrapolation is not supported"))
 @inline preweight(sitp::ScaledInterpolation{T,N}, args::Vararg{Any,N}) where {T,N} = begin
-    @boundscheck (checkbounds(Bool, sitp, fastervec.(args)...) || Base.throw_boundserror(sitp, args))
+    @boundscheck _checkbounds(BoundsCheckStyle(sitp), sitp, args...) || 
+        Base.throw_boundserror(sitp, args)
     @inbounds preweight(sitp.itp, unsaled.(sitp.ranges, args)...)
 end
 @inline preweight(itp::BSplineInterpolation{T,N}, args::Vararg{Any,N}) where {T,N} = begin
-    @boundscheck (checkbounds(Bool, itp, fastervec.(args)...) || Base.throw_boundserror(itp, args))
+    @boundscheck _checkbounds(BoundsCheckStyle(itp), itp, args...) || 
+        Base.throw_boundserror(itp, args)
     function weight_ind(itpflag, knotvec, x)
         makewi(y, ::Any) = begin
             pos, coefs = weightedindex_parts((value_weights,), itpflag, knotvec, y)
             maybe_weightedindex(pos, coefs[1])
         end
-        makewi.(x, Ref(itp))
+        makewi.(x, getcoefs(itp) |> Ref)
     end
     (WeightedInterp(itp.coefs), weight_ind.(itpinfo(itp)..., args)...)
 end
@@ -53,14 +56,16 @@ end
     adapt_structure(to, itp::BSplineInterpolation{T,N}) where {T,N} = begin
         coefs, parentaxes, it = itp.coefs, itp.parentaxes, itp.it
         coefs′ = adapt(to, coefs)
-        BSplineInterpolation{T,N,typeof.((coefs′,it,parentaxes))...}(coefs′, parentaxes, it)
+        Para = (coefs′,it,parentaxes) .|> typeof
+        BSplineInterpolation{T,N,Para...}(coefs′, parentaxes, it)
     end
 
     adapt_structure(to, itp::LanczosInterpolation{T,N}) where {T,N} = begin
         coefs, parentaxes, it = itp.coefs, itp.parentaxes, itp.it
         coefs′ = adapt(to, coefs)
-        parentaxes′ = adapt.(Ref(to), parentaxes)
-        LanczosInterpolation{T,N,typeof.((it,coefs′,parentaxes′))...}(coefs′, parentaxes′, it)
+        parentaxes′ = adapts(to, parentaxes...)
+        Para = (it,coefs′,parentaxes′) .|> typeof
+        LanczosInterpolation{T,N,Para...}(coefs′, parentaxes′, it)
     end
 
     adapt_structure(to, itp::ScaledInterpolation{T,N}) where {T,N} = begin
@@ -83,16 +88,9 @@ end
     adapt_structure(to, itp::WeightedInterp) =
         adapt(to, itp.coefs) |> WeightedInterp
 
-
-    @inline getcoefs(x::AbstractInterpolationWrapper) = parent(x) |> getcoefs
-    @inline getcoefs(x::AbstractInterpolation) = coefficients(x)
-    @inline getcoefs(x::WeightedInterp) = parent(x)
-    device(x::Union{WeightedInterp, AbstractInterpolation}) = getcoefs(x) |> device
-
     # With Adapt v"3.3.1", there's no need to use Ref to force adapt
     # but I think the style hack is still needed.
     broadcasted(itp::Union{WeightedInterp, AbstractInterpolation}, args...) = begin
-        # using Ref on CPU mess up the speed, so we invoke to the general dispatch
         args′ = broadcastable.(args)
         style_hack = getcoefs(itp) |> Ref
         style = combine_styles(style_hack, args′...)

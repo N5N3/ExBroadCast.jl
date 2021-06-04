@@ -12,10 +12,11 @@ backend(A::TupleDummy) = backends(parent(A))
 
 # Adapt fix
 import Adapt: adapt_structure, adapt
-function adapt_structure(to, td::TupleDummy{T,N,L}) where {T,N,L}
-    newarrays = map(x -> adapt(to, x), td.arrays)
-    TupleDummy{T,N,L}(newarrays,td.ax)
-end
+@inline adapts(to, x, ys...) = (adapt(to, x), adapts(to, ys...)...)
+@inline adapts(to) = ()
+adapt_structure(to, td::TupleDummy{T,N,L}) where {T,N,L} = 
+    TupleDummy{T,N,L}(adapts(to, td.arrays...), td.ax)
+    
 @inline function copyto!(dest::TupleDummy, bc::Broadcasted{Nothing})
     device(dest) == AnyGPU && return gpu_copyto!(dest, bc)
     invoke(copyto!, Tuple{AbstractArray, Broadcasted{Nothing}}, dest, bc)
