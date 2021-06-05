@@ -41,8 +41,8 @@ end
         Base.throw_boundserror(itp, args)
     function weight_ind(itpflag, knotvec, x)
         makewi(y, ::Any) = begin
-            pos, coefs = weightedindex_parts((value_weights,), itpflag, knotvec, y)
-            maybe_weightedindex(pos, coefs[1])
+            pos, (coefs,) = weightedindex_parts((value_weights,), itpflag, knotvec, y)
+            maybe_weightedindex(pos, coefs)
         end
         makewi.(x, getcoefs(itp) |> Ref)
     end

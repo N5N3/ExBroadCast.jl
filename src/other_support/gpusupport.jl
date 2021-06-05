@@ -1,19 +1,16 @@
 ## GPU support
-import GPUArrays: BroadcastGPUArray, backend,
-                launch_heuristic, launch_configuration, gpu_call,
-                linear_index, global_size, @cartesianidx
-const BGA = BroadcastGPUArray
-device(::BGA) = AnyGPU
+import GPUArrays: backend, gpu_call, linear_index, launch_heuristic, launch_configuration
 
 # in-place soa support
-backend(A::TupleDummy) = backends(parent(A))
-@inline backends(nt::NamedTuple) = values(nt) |> backends
-@inline backends(t::Tuple) = getsame(backend, t...)
+@inline backends(::Type{<:NamedTuple{<:Any, T}}) where T = backends(T)
+@inline backends(::Type{T}) where T <: Tuple = getsame(backend, T.parameters...)
 
 # Adapt fix
 import Adapt: adapt_structure, adapt
 @inline adapts(to, x, ys...) = (adapt(to, x), adapts(to, ys...)...)
 @inline adapts(to) = ()
+
+backend(::Type{T}) where T <: TupleDummy = backends(T.parameters[4])
 adapt_structure(to, td::TupleDummy{T,N,L}) where {T,N,L} = 
     TupleDummy{T,N,L}(adapts(to, td.arrays...), td.ax)
     
@@ -100,8 +97,8 @@ forcedim0(::Style) where Style <: AbstractArrayStyle = Val(0) |> Style
 @require OffsetArrays = "6fe1bfb0-de20-5000-8ca7-80f57d26f881" begin
     import .OffsetArrays: OffsetArray
     ## general
-    device(A::OffsetArray) = parent(A) |> device
-    backend(A::OffsetArray) = parent(A) |> backend
+    ## device has been defined in ArrayInterface
+    backend(::Type{T}) where T <: OffsetArray = ArrayInterface.parent_type(T) |> backend
     ## adapt_structure has been defined in OffsetArrays.jl
     map_show_copy(:OffsetArray)
     ## unique
@@ -112,8 +109,8 @@ end
 @require StructArrays = "09ab397b-f2b6-538f-b94a-2f83cf4a842a" begin
     import .StructArrays: StructArray, StructArrayStyle, components
     ## general
-    device(A::StructArray) = components(A) |> devices
-    backend(A::StructArray) = components(A) |> backends
+    device(::Type{T}) where T <: StructArray = T.parameters[3] |> devices
+    backend(::Type{T}) where T <: StructArray = T.parameters[3] |> backends
     ## adapt_structure has been defined in StructArrays.jl
     map_show_copy(:StructArray)
     # unique

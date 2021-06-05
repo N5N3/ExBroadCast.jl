@@ -8,11 +8,12 @@ end
 
 # check the backend
 using ArrayInterface
-const AnyGPU = ArrayInterface.GPU
+const AnyGPU = ArrayInterface.GPU()
 gpu_copyto!(args...) = throw("You need using CUDA first!")
-device(x) = ArrayInterface.device(x)
-@inline devices(nt::NamedTuple) = values(nt) |> devices
-@inline devices(t::Tuple) = getsame(device, t...)
+device(x) = typeof(x) |> device
+device(::Type{T}) where T = ArrayInterface.device(T)
+@inline devices(::Type{<:NamedTuple{<:Any, T}}) where T = devices(T)
+@inline devices(::Type{T}) where T <: Tuple = getsame(device, T.parameters...)
 
 # force inlined map that return nothing
 @inline fmap(f::Op, t₁::Tuple{}) where Op = nothing
@@ -62,11 +63,14 @@ function TupleDummy(arrays::Tuple{AbstractArray,AbstractArray,Vararg{AbstractArr
     ax = getsame(axes, arrays...)
     LinearFLag = mapreduce((x) -> IndexStyle(x) isa IndexLinear, &, arrays)
     ElType = Tuple{eltype.(arrays)...}
-    TupleDummy{ElType,length(ax),LinearFLag}(arrays,ax)
+    TupleDummy{ElType,length(ax),LinearFLag}(arrays, ax)
 end
+device(::Type{T}) where T <: TupleDummy = devices(T.parameters[4])
 parent(td::TupleDummy) = td.arrays
 size(td::TupleDummy, args...) = size(td.arrays[1], args...)
 axes(td::TupleDummy) = td.ax
+
+
 LTD{N} = TupleDummy{T,N,AllLinear} where T
 Base.IndexStyle(::LTD)  = IndexLinear()
 @inline setindex!(td::LTD, value::Tuple, ix::Int) =
@@ -81,8 +85,6 @@ Base.IndexStyle(::CTD)  = IndexCartesian()
     mapreduce(x -> mightalias(x, A), |, dest.arrays) ? unaliascopy(A) : A
 @inline broadcast_unalias(dest::TupleDummy, src::AbstractArray) =
     mapreduce(x -> x === src, |, dest.arrays) ? src : unalias(dest, src)
-
-device(td::TupleDummy) = devices(td.arrays)
 
 ## toa_similar
 _similar(bc, T) = similar(bc, T)
