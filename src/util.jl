@@ -92,7 +92,7 @@ _similar(bc::Broadcasted{<:DefaultArrayStyle}, ::Type{Bool}) = similar(Array{Boo
 function toa_similar(bc::Broadcasted)
     ElType = combine_eltypes(bc.f, bc.args)
     ElType <: Tuple{Any,Vararg{Any}} && Base.isconcretetype(ElType) ||
-        throw("$ElType is not a legal return type for @tab!")
+        throw(ArgumentError("$ElType is not a legal return type for @tab!"))
     dest = map(T -> _similar(bc, T), tuple(ElType.parameters...))
     TupleDummy{ElType,ndims(bc),AllLinear}(dest, axes(bc))
 end

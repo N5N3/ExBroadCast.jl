@@ -143,6 +143,7 @@ macro mtb(args...)
     else
         error("Invalid input")
     end
+    nthread == 1 && return esc(ex)
     return esc(lowerhack(Self, ex, Template_mtb, Val(nthread)))
 end
 
@@ -166,6 +167,7 @@ end
 """
 macro mtab(args...)
     global Template_mtab
+    global Template_tab
     na = length(args)
     if na == 1
         nthread, ex = num_threads(), args[1]
@@ -174,6 +176,7 @@ macro mtab(args...)
     else
         error("Invalid input")
     end
+    nthread == 1 && return esc(lowerhack(Self, ex, Template_tab))
     return esc(lowerhack(Self, ex, Template_mtab, Val(nthread)))
 end
 

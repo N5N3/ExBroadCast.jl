@@ -1,12 +1,15 @@
 ## materialize
 @inline mtb_materialize(x, ::Any) = x
-@inline mtb_materialize(bc::Broadcasted, ::Val{TN}) where TN = mtb_copy(instantiate(bc), Val(TN))
+@inline mtb_materialize(bc::Broadcasted, ::Val{TN}) where TN = begin
+    TN <= 1 && return copy(instantiate(bc))
+    mtb_copy(instantiate(bc), TN)
+end
 
-@inline mtb_materialize!(dest, x, ::Val{TN}) where TN = 
-    mtb_materialize!(dest, instantiate(Broadcasted(identity, (x,), axes(dest))), Val(TN))
+@inline mtb_materialize!(dest, x, TN) = 
+    mtb_materialize!(dest, instantiate(Broadcasted(identity, (x,), axes(dest))), TN)
 
-@inline mtb_materialize!(dest, bc::Broadcasted{Style}, ::Val{TN}) where {Style,TN} = 
-    mtb_materialize!(combine_styles(dest, bc), dest, bc, Val(TN))
+@inline mtb_materialize!(dest, bc::Broadcasted{Style}, TN) where {Style} = 
+    mtb_materialize!(combine_styles(dest, bc), dest, bc, TN)
 
 @inline function mtb_materialize!(
     ::BroadcastStyle,
@@ -14,29 +17,31 @@
     bc::Broadcasted{Style},
     ::Val{TN}
 ) where {Style,TN}
-    mtb_copyto!(dest, instantiate(Broadcasted{Style}(bc.f, bc.args, axes(dest))), Val(TN))
+    TN <= 1 && return copyto!(instantiate(bc))
+    mtb_copyto!(dest, instantiate(Broadcasted{Style}(bc.f, bc.args, axes(dest))), TN)
 end
 
 ## copyto
 @inline mtb_copy(bc::Broadcasted{Style{Tuple}}, ::Any) = copy(bc)
 @inline mtb_copy(bc::FilledBC, ::Any) = copy(bc)
 @inline mtb_copy(bc::Broadcasted{<:Union{Nothing,Unknown}}, ::Any) = copy(bc)
-@inline function mtb_copy(bc::Broadcasted{Style}, ::Val{TN}) where {Style,TN}
+@inline function mtb_copy(bc::Broadcasted{Style}, TN) where Style
     ElType = combine_eltypes(bc.f, bc.args)
-    Base.isconcretetype(ElType) ||
-        error("The type of output is not concrete! Please use Base.Broadcast.")
-    mtb_copyto!(similar(bc, ElType), bc, Val(TN))
+    if !Base.isconcretetype(ElType)
+        @warn "$(ElType) is not concrete, invoke Base.copy"
+        copy(bc)
+    end
+    mtb_copyto!(similar(bc, ElType), bc, TN)
 end
 
 ## copyto!
-@inline mtb_copyto!(dest::AbstractArray, bc::Broadcasted, ::Val{TN}) where TN =
-    mtb_copyto!(dest, convert(Broadcasted{Nothing}, bc), Val(TN))
+@inline mtb_copyto!(dest::AbstractArray, bc::Broadcasted, TN) =
+    mtb_copyto!(dest, convert(Broadcasted{Nothing}, bc), TN)
 
 @inline mtb_copyto!(dest::AbstractArray, bc::FilledBC, ::Any) = copyto!(dest, bc)
 
-@inline function mtb_copyto!(dest::AbstractArray, bc::Broadcasted{Nothing}, ::Val{TN}) where TN
+@inline function mtb_copyto!(dest::AbstractArray, bc::Broadcasted{Nothing}, TN)
     device(dest) == AnyGPU && return gpu_copyto!(dest, bc)
-    TN == 1 && return copyto!(dest, bc)
     axes(dest) == axes(bc) || throwdm(axes(dest), axes(bc))
     if bc.f === identity && bc.args isa Tuple{AbstractArray}
         A = bc.args[1]
@@ -61,8 +66,7 @@ end
 end
 
 const bitcache_chunks_bits = 6
-@inline function mtb_copyto!(dest::BitArray, bc::Broadcasted{Nothing}, ::Val{TN}) where TN
-    TN == 1 && return copyto!(dest, bc)
+@inline function mtb_copyto!(dest::BitArray, bc::Broadcasted{Nothing}, TN)
     axes(dest) == axes(bc) || throwdm(axes(dest), axes(bc))
     ischunkedbroadcast(dest, bc) && return chunkedcopyto!(dest, bc)
     length(dest) < 256 && return invoke(copyto!, Tuple{AbstractArray,Broadcasted{Nothing}}, dest, bc)
