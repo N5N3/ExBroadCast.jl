@@ -1,6 +1,3 @@
-## broadcast
-tab_broadcast(f::F, As...) where F = broadcasted(f, As...) |> tab_materialize
-
 ## materialize
 @inline tab_materialize(x) = x
 @inline tab_materialize(bc::Broadcasted) = instantiate(bc) |> tab_copy

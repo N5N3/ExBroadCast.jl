@@ -10,8 +10,8 @@ end
 using ArrayInterface
 const AnyGPU = ArrayInterface.GPU()
 gpu_copyto!(args...) = throw("You need using CUDA first!")
-device(x) = typeof(x) |> device
 device(::Type{T}) where T = ArrayInterface.device(T)
+device(x) = typeof(x) |> device
 @inline devices(::Type{<:NamedTuple{<:Any, T}}) where T = devices(T)
 @inline devices(::Type{T}) where T <: Tuple = getsame(device, T.parameters...)
 

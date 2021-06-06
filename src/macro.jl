@@ -3,8 +3,6 @@ const Self = @__MODULE__
 GR(x, y) = GlobalRef(x, y)
 
 const Template_mtb = IdDict(
-    :broadcast!                => GR(Self, :mtb_broadcast!),
-    :broadcast                 => GR(Self, :mtb_broadcast),
     GR(Self, :tab_broadcast)   => GR(Self, :mtab_broadcast),
     GR(Base, :materialize)     => GR(Self, :mtb_materialize),
     GR(Base, :materialize!)    => GR(Self, :mtb_materialize!),
@@ -12,15 +10,12 @@ const Template_mtb = IdDict(
 )
 
 const Template_tab = IdDict(
-    :broadcast                 => GR(Self, :tab_broadcast),
     GR(Self, :mtb_broadcast)   => GR(Self, :mtab_broadcast),
     GR(Base, :materialize)     => GR(Self, :tab_materialize),
     GR(Self, :mtb_materialize) => GR(Self, :mtab_materialize),
 )
 
 const Template_mtab = IdDict(
-    :broadcast!                => GR(Self, :mtb_broadcast!),
-    :broadcast                 => GR(Self, :mtab_broadcast),
     GR(Base, :materialize!)    => GR(Self, :mtb_materialize!),
     GR(Base, :materialize)     => GR(Self, :mtab_materialize),
 )
@@ -56,10 +51,13 @@ replacetemp(ex::Core.Slot, SSAs, Slots) = @inbounds Slots[ex.id]
 replacetemp(ex::Core.SSAValue, SSAs, Slots) = @inbounds SSAs[ex.id]
 # replace broadcast(!) and materialize(!)
 replacecall(ex, args...) = ex
-function replacecall(ex::Expr, temps::AbstractDict)
+function replacecall(ex::Expr, temps::AbstractDict, addargs)
     @inbounds if ex.head === :call
         func = ex.args[1]
         ex.args[1] = get(temps, func, func)
+        if !isnothing(addargs) && ex.args[1] !== func
+            push!(ex.args, addargs)
+        end
     end
     ex
 end
@@ -69,6 +67,18 @@ replacereturn(ex::Core.ReturnNode, Result, EndPoint) =
     Expr(:block, :(local $Result = $(ex.val)), Expr(:symbolicgoto, EndPoint))
 function replacereturn(ex::Expr, Result, EndPoint)
     ex.head === :call && ex.args[1] === :𝐫𝐞𝐭𝐮𝐫𝐧 && return :(return $(ex.args[2]))
+    ex
+end
+
+function replacebroadcast(ex)
+    Meta.isexpr(ex, :call) || return ex
+    if ex.args[1] === :broadcast 
+        ex.args[1] = GlobalRef(Base, :broadcasted) 
+        return :($(GlobalRef(Base, :materialize))($ex))
+    elseif ex.args[1] === :broadcast!
+        ex′ = Expr(:call, GlobalRef(Base, :broadcasted), ex.args[2], ex.args[4:end]...)
+        return :($(GlobalRef(Base, :materialize!))($(ex.args[3]), $ex′))
+    end
     ex
 end
 
@@ -86,10 +96,12 @@ function lowerhack(
     mod::Module,
     ex::Expr,
     temps,
-    exstart = nothing,
-    exend = nothing,
+    addarg = nothing
 )
-    ex = MacroTools.postwalk(keepreturn, ex)
+    ex = MacroTools.postwalk(ex) do x
+        x = replacebroadcast(x)
+        x = keepreturn(x)
+    end
     ci = Meta.lower(mod, ex)
     ci.head === :error && error(ci.args[1])
     code = first(ci.args).code
@@ -101,7 +113,7 @@ function lowerhack(
     exblock = Expr(:block, correctgoto!(code)...)
     exblock = MacroTools.postwalk(exblock) do x
         x = replacetemp(x, SSAs, Slots)
-        x = replacecall(x, temps)
+        x = replacecall(x, temps, addarg)
         x = MacroTools.flatten1(x)
     end
     ## final add
@@ -125,17 +137,13 @@ macro mtb(args...)
     global Template_mtb
     na = length(args)
     if na == 1
-        ex = args[1]
-        return esc(lowerhack(Self, ex, Template_mtb))
+        nthread, ex = num_threads(), args[1]
     elseif na == 2
         nthread, ex = args
-        nthread_old = num_threads()
-        ex′ = :(ExBroadcast.set_num_threads($nthread))
-        ex″ = :(ExBroadcast.set_num_threads($nthread_old))
-        return esc(lowerhack(Self, ex, Template_mtb, ex′, ex″))
     else
         error("Invalid input")
     end
+    return esc(lowerhack(Self, ex, Template_mtb, Val(nthread)))
 end
 
 """
@@ -160,17 +168,13 @@ macro mtab(args...)
     global Template_mtab
     na = length(args)
     if na == 1
-        ex = args[1]
-        return esc(lowerhack(Self, ex, Template_mtab))
+        nthread, ex = num_threads(), args[1]
     elseif na == 2
         nthread, ex = args
-        nthread_old = num_threads()
-        ex′ = :(ExBroadcast.set_num_threads($nthread))
-        ex″ = :(ExBroadcast.set_num_threads($nthread_old))
-        return esc(lowerhack(Self, ex, Template_mtab, ex′, ex″))
     else
         error("Invalid input")
     end
+    return esc(lowerhack(Self, ex, Template_mtab, Val(nthread)))
 end
 
 """
