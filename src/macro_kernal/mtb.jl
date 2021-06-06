@@ -61,7 +61,7 @@ end
         nothing
     end
 
-    mtb_call(broadcast_kernel, Iˢs)
+        mtb_call(broadcast_kernel, Iˢs)
     dest
 end
 
@@ -117,7 +117,7 @@ else
         @inbounds if len > 3
             len′ = len >> 1
             task = Threads.@spawn mtb_call(kernal, inds[1:len′])
-            mtb_call(kernal, inds[1+len′:len])
+            mtb_call(kernal, inds[1 + len′:len])
             wait(task)
         elseif len == 3
             task₁ = Threads.@spawn kernal(inds[1])
@@ -138,9 +138,9 @@ end
 @inline function mtb_config(
     thread_num::Integer,
     ax::AbstractArray,
-    min_size::Integer = 1,
+    min_size::Integer=1,
 )
     Iˢ, Iᵉ = Ref(ax) .|> (firstindex, lastindex) 
     len = cld(length(ax), min(thread_num, Threads.nthreads()) * min_size) * min_size
-    len - 1, Iᵉ, Iˢ .+ len .* (0:cld(length(ax), len)-1)
+    len - 1, Iᵉ, Iˢ .+ len .* (0:cld(length(ax), len) - 1)
 end

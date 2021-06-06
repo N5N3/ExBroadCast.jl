@@ -22,6 +22,6 @@ end
     ElType <: Tuple{Any,Vararg{Any}} && Base.isconcretetype(ElType) ||
         throw("$ElType is not a legal return type for @tab!")
     N = length(dim[1])
-    N <= 16 && return mapfoldr(getind, (x, y) -> maketuple.(x, y), ntuple(identity,Val(N)))
+    N <= 16 && return mapfoldr(getind, (x, y) -> maketuple.(x, y), ntuple(identity, Val(N)))
     mapfoldr(getind, (x, y) -> maketuple.(x, y), dim[1])
 end

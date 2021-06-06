@@ -3,26 +3,24 @@ const Self = @__MODULE__
 GR(x, y) = GlobalRef(x, y)
 
 const Template_mtb = IdDict(
-    GR(Self, :tab_broadcast)   => GR(Self, :mtab_broadcast),
-    GR(Base, :materialize)     => GR(Self, :mtb_materialize),
-    GR(Base, :materialize!)    => GR(Self, :mtb_materialize!),
+    GR(Self, :tab_broadcast) => GR(Self, :mtab_broadcast),
+    GR(Base, :materialize) => GR(Self, :mtb_materialize),
+    GR(Base, :materialize!) => GR(Self, :mtb_materialize!),
     GR(Self, :tab_materialize) => GR(Self, :mtab_materialize),
 )
 
 const Template_tab = IdDict(
-    GR(Self, :mtb_broadcast)   => GR(Self, :mtab_broadcast),
-    GR(Base, :materialize)     => GR(Self, :tab_materialize),
+    GR(Self, :mtb_broadcast) => GR(Self, :mtab_broadcast),
+    GR(Base, :materialize) => GR(Self, :tab_materialize),
     GR(Self, :mtb_materialize) => GR(Self, :mtab_materialize),
 )
 
 const Template_mtab = IdDict(
-    GR(Base, :materialize!)    => GR(Self, :mtb_materialize!),
-    GR(Base, :materialize)     => GR(Self, :mtab_materialize),
+    GR(Base, :materialize!) => GR(Self, :mtb_materialize!),
+    GR(Base, :materialize) => GR(Self, :mtab_materialize),
 )
 
-const Template_lzb = IdDict(
-    GR(Base, :materialize)     => GR(Base.Broadcast, :instantiate),
-)
+const Template_lzb = IdDict(GR(Base, :materialize) => GR(Base.Broadcast, :instantiate))
 ## general function
 using MacroTools
 # use @goto and @label to repalce Core.GotoNode Expr(:gotoifnot)
@@ -38,8 +36,13 @@ function correctgoto!(code)
     end
     @inbounds for k in eachindex(code)
         if code[k] isa Core.GotoIfNot
-            code[k] = Expr(:if, code[k].cond, Expr(:block), Expr(:symbolicgoto, get_tag(code[k].dest)))
-        elseif code[k] isa Core.GotoNode 
+            code[k] = Expr(
+                :if,
+                code[k].cond,
+                Expr(:block),
+                Expr(:symbolicgoto, get_tag(code[k].dest)),
+            )
+        elseif code[k] isa Core.GotoNode
             code[k] = Expr(:symbolicgoto, get_tag(code[k].label))
         end
     end
@@ -63,7 +66,7 @@ function replacecall(ex::Expr, temps::AbstractDict, addargs)
 end
 # replace return
 replacereturn(ex, args...) = ex
-replacereturn(ex::Core.ReturnNode, Result, EndPoint) = 
+replacereturn(ex::Core.ReturnNode, Result, EndPoint) =
     Expr(:block, :(local $Result = $(ex.val)), Expr(:symbolicgoto, EndPoint))
 function replacereturn(ex::Expr, Result, EndPoint)
     ex.head === :call && ex.args[1] === :𝐫𝐞𝐭𝐮𝐫𝐧 && return :(return $(ex.args[2]))
@@ -72,8 +75,8 @@ end
 
 function replacebroadcast(ex)
     Meta.isexpr(ex, :call) || return ex
-    if ex.args[1] === :broadcast 
-        ex.args[1] = GlobalRef(Base, :broadcasted) 
+    if ex.args[1] === :broadcast
+        ex.args[1] = GlobalRef(Base, :broadcasted)
         return :($(GlobalRef(Base, :materialize))($ex))
     elseif ex.args[1] === :broadcast!
         ex′ = Expr(:call, GlobalRef(Base, :broadcasted), ex.args[2], ex.args[4:end]...)
@@ -88,16 +91,15 @@ function keepreturn(ex)
 end
 
 function addeq(ex, syms::Symbol)
-    Meta.isexpr(ex, :call) || ex isa Symbol || ex isa Core.Slot || ex isa GlobalRef || return ex
+    Meta.isexpr(ex, :call) ||
+        ex isa Symbol ||
+        ex isa Core.Slot ||
+        ex isa GlobalRef ||
+        return ex
     :(local $syms = $ex)
 end
 
-function lowerhack(
-    mod::Module,
-    ex::Expr,
-    temps,
-    addarg = nothing
-)
+function lowerhack(mod::Module, ex::Expr, temps, addarg = nothing)
     ex = MacroTools.postwalk(ex) do x
         x = replacebroadcast(x)
         x = keepreturn(x)
@@ -143,7 +145,7 @@ macro mtb(args...)
     else
         error("Invalid input")
     end
-    (!isa(nthread,Integer) || nthread <= 1) && return esc(ex)
+    (!isa(nthread, Integer) || nthread <= 1) && return esc(ex)
     return esc(lowerhack(Self, ex, Template_mtb, Val(nthread)))
 end
 
@@ -176,7 +178,8 @@ macro mtab(args...)
     else
         error("Invalid input")
     end
-    (!isa(nthread,Integer) || nthread <= 1) && return esc(lowerhack(Self, ex, Template_tab))
+    (!isa(nthread, Integer) || nthread <= 1) &&
+        return esc(lowerhack(Self, ex, Template_tab))
     return esc(lowerhack(Self, ex, Template_mtab, Val(nthread)))
 end
 
