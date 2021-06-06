@@ -32,12 +32,12 @@ unsaled(r::AbstractRange, x) = @lzb (x .- first(r)) .* inv(step(r)) .+ oneunit(e
 @inline preweight(itp::Extrapolation{T,N}, args::Vararg{Any,N}) where {T,N} =
     throw(ArgumentError("Extrapolation is not supported"))
 @inline preweight(sitp::ScaledInterpolation{T,N}, args::Vararg{Any,N}) where {T,N} = begin
-    @boundscheck _checkbounds(BoundsCheckStyle(sitp), sitp, args...) || 
+    @boundscheck _checkbounds(BoundsCheckStyle(sitp), sitp, args) || 
         Base.throw_boundserror(sitp, args)
     @inbounds preweight(sitp.itp, unsaled.(sitp.ranges, args)...)
 end
 @inline preweight(itp::BSplineInterpolation{T,N}, args::Vararg{Any,N}) where {T,N} = begin
-    @boundscheck _checkbounds(BoundsCheckStyle(itp), itp, args...) || 
+    @boundscheck _checkbounds(BoundsCheckStyle(itp), itp, args) || 
         Base.throw_boundserror(itp, args)
     function weight_ind(itpflag, knotvec, x)
         makewi(y, ::Any) = begin
@@ -99,7 +99,7 @@ end
 
     #make checkbounds work on gpu
     allbetween(l::Real, xs::AbstractArray, u::Real) = begin
-        getdevice(xs) == AnyGPU && return all(x -> l <= x <= u, xs)
+        device(xs) == AnyGPU && return all(x -> l <= x <= u, xs)
         invoke(allbetween, Tuple{typeof(l),Any,typeof(u)}, l, xs, u)
     end
 

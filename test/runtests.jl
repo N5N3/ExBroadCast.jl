@@ -54,5 +54,9 @@ end
     res = cuitp.(-10:10,-10:10)
     @test res isa CuArray
     @test collect(res) ≈ itp.(-10:10,-10:10)
+
+    itp = itp.itp
+    a,b,c = preweight(itp,-1:0.01f0:1,-1:0.01f0:1)
+    @test a.(b,c) == itp.(-1:0.01f0:1,-1:0.01f0:1)
 end
 
