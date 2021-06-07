@@ -6,15 +6,6 @@ export Lazy, eachdim′, eachcol′, eachrow′, eachslice′
     f(x)
 end
 
-# check the backend
-using ArrayInterface
-const AnyGPU = ArrayInterface.GPU()
-gpu_copyto!(args...) = throw("You need using CUDA first!")
-device(::Type{T}) where {T} = ArrayInterface.device(T)
-device(x) = typeof(x) |> device
-@inline devices(::Type{<:NamedTuple{<:Any,T}}) where {T} = devices(T)
-@inline devices(::Type{T}) where {T<:Tuple} = getsame(device, T.parameters...)
-
 # force inlined map that return nothing
 @inline fmap(f::F, t₁::Tuple{}) where {F} = nothing
 @inline fmap(f::F, t₁::Tuple) where {F} = begin
@@ -57,7 +48,6 @@ function TupleDummy(arrays::Tuple{AbstractArray,AbstractArray,Vararg{AbstractArr
     ElType = Tuple{eltype.(arrays)...}
     TupleDummy{ElType,length(ax),LinearFLag}(arrays, ax)
 end
-device(::Type{T}) where {T<:TupleDummy} = devices(T.parameters[4])
 parent(td::TupleDummy) = td.arrays
 size(td::TupleDummy, args...) = size(td.arrays[1], args...)
 axes(td::TupleDummy) = td.ax
