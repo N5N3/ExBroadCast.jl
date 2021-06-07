@@ -123,5 +123,5 @@ end
 @inline function mtb_config(thread_num::Integer, ax::AbstractArray, min_size::Integer = 1)
     Iˢ, Iᵉ = Ref(ax) .|> (firstindex, lastindex)
     len = cld(length(ax), thread_num * min_size) * min_size
-    len - 1, Iᵉ, Iˢ .+ len .* (0:cld(length(ax), len)-1)
+    len - 1, Iᵉ, Iˢ:len:Iᵉ
 end
