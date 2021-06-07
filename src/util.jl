@@ -1,7 +1,7 @@
 export Lazy, eachdim′, eachcol′, eachrow′, eachslice′
 # getsame
-@inline getsame(f::F, x) where F = f(x)
-@inline getsame(f::F, x, y, zs...) where F = begin
+@inline getsame(f::F, x) where {F} = f(x)
+@inline getsame(f::F, x, y, zs...) where {F} = begin
     f(x) == getsame(f, y, zs...) || throw(ArgumentError("inputs with different $f"))
     f(x)
 end
@@ -10,41 +10,32 @@ end
 using ArrayInterface
 const AnyGPU = ArrayInterface.GPU()
 gpu_copyto!(args...) = throw("You need using CUDA first!")
-device(::Type{T}) where T = ArrayInterface.device(T)
+device(::Type{T}) where {T} = ArrayInterface.device(T)
 device(x) = typeof(x) |> device
-@inline devices(::Type{<:NamedTuple{<:Any, T}}) where T = devices(T)
-@inline devices(::Type{T}) where T <: Tuple = getsame(device, T.parameters...)
+@inline devices(::Type{<:NamedTuple{<:Any,T}}) where {T} = devices(T)
+@inline devices(::Type{T}) where {T<:Tuple} = getsame(device, T.parameters...)
 
 # force inlined map that return nothing
-@inline fmap(f::Op, t₁::Tuple{}) where Op = nothing
-@inline fmap(f::Op, t₁::Tuple  ) where Op = begin
+@inline fmap(f::F, t₁::Tuple{}) where {F} = nothing
+@inline fmap(f::F, t₁::Tuple) where {F} = begin
     f(t₁[1])
     fmap(f, Base.tail(t₁))
 end
 
-@inline fmap(f::Op, t₁::Tuple{}, t₂::Tuple{}) where Op = nothing
-@inline fmap(f::Op, t₁::Tuple  , t₂::Tuple  ) where Op = begin
+@inline fmap(f::F, t₁::Tuple{}, t₂::Tuple{}) where {F} = nothing
+@inline fmap(f::F, t₁::Tuple, t₂::Tuple) where {F} = begin
     f(t₁[1], t₂[1])
     fmap(f, Base.tail(t₁), Base.tail(t₂))
 end
 
 
 ### import many funtions
-## for Tuple
-import Base.Broadcast: Style, _broadcast_getindex
-## for copyto
-import Base.Broadcast:  throwdm, AbstractArrayStyle, Unknown, combine_eltypes,
-                        preprocess, Broadcasted, DefaultArrayStyle
-const FilledBC = Broadcasted{<:AbstractArrayStyle{0}}
-import Base.Broadcast:  ischunkedbroadcast, chunkedcopyto!, bitcache_size,
-                        dumpbitcache, bitcache_chunks
-## for materialize
-import Base.Broadcast: materialize!, BroadcastStyle, combine_styles, instantiate
-##
-import Base.Broadcast: broadcastable
-## TupleDummy
+import Base.Broadcast: throwdm, AbstractArrayStyle, Unknown, combine_eltypes,
+    preprocess, Broadcasted, DefaultArrayStyle, ischunkedbroadcast, chunkedcopyto!, bitcache_size, 
+    dumpbitcache, bitcache_chunks, materialize!, BroadcastStyle, combine_styles, instantiate, 
+    roadcastable, broadcast_unalias, Style, _broadcast_getindex
 import Base: size, axes, setindex!, unalias, mightalias, unaliascopy, IndexStyle, parent
-import Base.Broadcast: broadcast_unalias
+const FilledBC = Broadcasted{<:AbstractArrayStyle{0}}
 const AllLinear = true
 const AnyCartesian = false
 """
@@ -65,20 +56,20 @@ function TupleDummy(arrays::Tuple{AbstractArray,AbstractArray,Vararg{AbstractArr
     ElType = Tuple{eltype.(arrays)...}
     TupleDummy{ElType,length(ax),LinearFLag}(arrays, ax)
 end
-device(::Type{T}) where T <: TupleDummy = devices(T.parameters[4])
+device(::Type{T}) where {T<:TupleDummy} = devices(T.parameters[4])
 parent(td::TupleDummy) = td.arrays
 size(td::TupleDummy, args...) = size(td.arrays[1], args...)
 axes(td::TupleDummy) = td.ax
 
 
-LTD{N} = TupleDummy{T,N,AllLinear} where T
-Base.IndexStyle(::LTD)  = IndexLinear()
+LTD{N} = TupleDummy{T,N,AllLinear} where {T}
+Base.IndexStyle(::LTD) = IndexLinear()
 @inline setindex!(td::LTD, value::Tuple, ix::Int) =
-    fmap((a, v) -> (@inbounds a[ix] = v),td.arrays, value)
-CTD{N} = TupleDummy{T,N,AnyCartesian} where T
-Base.IndexStyle(::CTD)  = IndexCartesian()
-@inline setindex!(td::CTD{N}, value::Tuple, ixs::Vararg{Int,N}) where N =
-    fmap((a, v) -> (@inbounds a[ixs...] = v),td.arrays, value)
+    fmap((a, v) -> (@inbounds a[ix] = v), td.arrays, value)
+CTD{N} = TupleDummy{T,N,AnyCartesian} where {T}
+Base.IndexStyle(::CTD) = IndexCartesian()
+@inline setindex!(td::CTD{N}, value::Tuple, ixs::Vararg{Int,N}) where {N} =
+    fmap((a, v) -> (@inbounds a[ixs...] = v), td.arrays, value)
 
 @inline unalias(dest::TupleDummy, A::AbstractRange) = A
 @inline unalias(dest::TupleDummy, A::AbstractArray) =
@@ -88,7 +79,8 @@ Base.IndexStyle(::CTD)  = IndexCartesian()
 
 ## toa_similar
 _similar(bc, T) = similar(bc, T)
-_similar(bc::Broadcasted{<:DefaultArrayStyle}, ::Type{Bool}) = similar(Array{Bool}, axes(bc))
+_similar(bc::Broadcasted{<:DefaultArrayStyle}, ::Type{Bool}) =
+    similar(Array{Bool}, axes(bc))
 function toa_similar(bc::Broadcasted)
     ElType = combine_eltypes(bc.f, bc.args)
     ElType <: Tuple{Any,Vararg{Any}} && Base.isconcretetype(ElType) ||
@@ -99,8 +91,8 @@ end
 
 module LazyCollect
 import Base: @propagate_inbounds, getindex
-import Base.Broadcast: BroadcastStyle, broadcastable, extrude, newindex, broadcasted, instantiate,
-                       Broadcasted, DefaultArrayStyle
+import Base.Broadcast: BroadcastStyle, broadcastable, extrude, newindex, broadcasted,
+    instantiate, Broadcasted, DefaultArrayStyle
 export Lazy
 
 @inline ndims(x) = x isa Tuple ? 1 : Base.ndims(x)
@@ -110,25 +102,29 @@ struct FakeDim{N,S,T,D} <: AbstractArray{T,N}
     data::D
     FakeDim{N,S}(data::T) where {N,S,T} = new{N,S,eltype(data),T}(data)
 end
-FakeDim{AD}(data) where AD = AD == 0 ? data : FakeDim{AD + ndims(data),AD + 1}(data)
+FakeDim{AD}(data) where {AD} = AD == 0 ? data : FakeDim{AD + ndims(data),AD + 1}(data)
 FakeDim{AD}(data::AbstractArray{T,0}) where {AD,T} = data
 FakeDim{AD}(data::Ref{T}) where {AD,T} = data
-FakeDim{AD}(data::Tuple{Any}) where AD = data
-FakeDim{AD}(data::Number) where AD = data
+FakeDim{AD}(data::Tuple{Any}) where {AD} = data
+FakeDim{AD}(data::Number) where {AD} = data
 FakeDim{AD}(id::FakeDim{N,S}) where {N,S,AD} = FakeDim{AD + N,AD + S}(id.data)
-FakeDim{AD}(bc::Broadcasted) where AD = broadcasted(bc.f, FakeDim{AD}.(bc.args)...)
+FakeDim{AD}(bc::Broadcasted) where {AD} = broadcasted(bc.f, FakeDim{AD}.(bc.args)...)
 
-Base.axes(id::FakeDim{N,S}) where {N,S} = (ntuple(_ -> Base.OneTo(1), Val(S - 1))..., axes(id.data)...)
+Base.axes(id::FakeDim{N,S}) where {N,S} =
+    (ntuple(_ -> Base.OneTo(1), Val(S - 1))..., axes(id.data)...)
 Base.size(id::FakeDim{N,S}) where {N,S} = (ntuple(_ -> 1, Val(S - 1))..., size(id.data)...)
 @inline extrude(x::FakeDim) = x
 # Specialize {N,N} to avoid allocation
-@inline newindex(::FakeDim{N,N}, I::CartesianIndex) where N = CartesianIndex(ntuple(oneunit,Val(N-1))..., I.I[N]...)
-@propagate_inbounds getindex(id::FakeDim{N,N}, I::Vararg{Int, N}) where N = id.data[I[N]]
-@inline newindex(::FakeDim{N,S}, I::CartesianIndex) where {N,S} = CartesianIndex(ntuple(oneunit,Val(S-1))..., I.I[S:N]...)
-@propagate_inbounds getindex(id::FakeDim{N,S}, I::Vararg{Int, N}) where {N,S} = id.data[I[S:N]...]
-BroadcastStyle(::Type{ID}) where ID <: FakeDim =
+@inline newindex(::FakeDim{N,N}, I::CartesianIndex) where {N} =
+    CartesianIndex(ntuple(oneunit, Val(N - 1))..., I.I[N]...)
+@propagate_inbounds getindex(id::FakeDim{N,N}, I::Vararg{Int,N}) where {N} = id.data[I[N]]
+@inline newindex(::FakeDim{N,S}, I::CartesianIndex) where {N,S} =
+    CartesianIndex(ntuple(oneunit, Val(S - 1))..., I.I[S:N]...)
+@propagate_inbounds getindex(id::FakeDim{N,S}, I::Vararg{Int,N}) where {N,S} =
+    id.data[I[S:N]...]
+BroadcastStyle(::Type{ID}) where {ID<:FakeDim} =
     ID.parameters[4] <: Tuple ? DefaultArrayStyle{ID.parameters[1]}() :
-                                BroadcastStyle(ID.parameters[4])
+    BroadcastStyle(ID.parameters[4])
 
 # Lazy is used to wrap Generator/Productor to avoid collect before broadcast.
 struct Lazy{P}
@@ -149,8 +145,9 @@ Lazy(l::Lazy) = l
     broadcasted(tuple, fakedims(iters...)...) |> instantiate
 end
 @inline fakedims(x, args...) = fakedims(Val(0), x, args...)
-@inline fakedims(::Val{N}, x, args...) where N = (FakeDim{N}(lazycollect(x)), fakedims(Val(N+ndims(x)), args...)...)
-@inline fakedims(::Val{N}) where N = ()
+@inline fakedims(::Val{N}, x, args...) where {N} =
+    (FakeDim{N}(lazycollect(x)), fakedims(Val(N + ndims(x)), args...)...)
+@inline fakedims(::Val{N}) where {N} = ()
 
 end
 using .LazyCollect
@@ -158,12 +155,12 @@ using .LazyCollect
 @inline unsafe_view(A, I...) = Base.unsafe_view(A, to_indices(A, I)...)
 eachcol′(A::AbstractVecOrMat) = Lazy(unsafe_view(A, :, i) for i in axes(A, 2))
 eachrow′(A::AbstractVecOrMat) = Lazy(unsafe_view(A, i, :) for i in axes(A, 1))
-function eachdim′(A::AbstractArray; dim::Val{D}) where D
+function eachdim′(A::AbstractArray; dim::Val{D}) where {D}
     D <= ndims(A) || throw(DimensionMismatch("A doesn't have $dim dimensions"))
     axes_all = ntuple(d -> d == D ? Ref(:) : axes(A, d), ndims(A))
     Lazy(unsafe_view(A, i...) for i in Iterators.product(axes_all...))
 end
-function eachslice′(A::AbstractArray; dim::Val{D}) where D
+function eachslice′(A::AbstractArray; dim::Val{D}) where {D}
     D <= ndims(A) || throw(DimensionMismatch("A doesn't have $dim dimensions"))
     inds_before = ntuple(d -> (:), D - 1)
     inds_after = ntuple(d -> (:), ndims(A) - D)
