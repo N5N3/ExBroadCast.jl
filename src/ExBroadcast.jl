@@ -1,8 +1,5 @@
 module ExBroadcast
 
-using Base: Integer
-import Base.Broadcast: copyto!, broadcasted, Broadcasted
-
 export @mtb, @tab, @mtab, @lzb
 
 const _NTHREADS = Ref(Threads.nthreads())

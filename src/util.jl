@@ -33,8 +33,9 @@ end
 import Base.Broadcast: throwdm, AbstractArrayStyle, Unknown, combine_eltypes,
     preprocess, Broadcasted, DefaultArrayStyle, ischunkedbroadcast, chunkedcopyto!, bitcache_size, 
     dumpbitcache, bitcache_chunks, materialize!, BroadcastStyle, combine_styles, instantiate, 
-    broadcastable, broadcast_unalias, Style, _broadcast_getindex
-import Base: size, axes, setindex!, unalias, mightalias, unaliascopy, IndexStyle, parent, unsafe_setindex!
+    broadcastable, broadcast_unalias, Style, _broadcast_getindex, broadcasted
+import Base: size, axes, setindex!, unalias, mightalias, unaliascopy, IndexStyle, parent, 
+    unsafe_setindex!, copyto!
 const FilledBC = Broadcasted{<:AbstractArrayStyle{0}}
 const AllLinear = true
 const AnyCartesian = false
