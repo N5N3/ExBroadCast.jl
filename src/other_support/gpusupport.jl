@@ -1,5 +1,6 @@
 ## GPU support
-import GPUArrays: backend, gpu_call, linear_index, launch_heuristic, launch_configuration
+import GPUArrays: backend, gpu_call, linear_index, launch_heuristic, launch_configuration, 
+    AbstractGPUArrayStyle
 
 # in-place soa support
 @inline backends(::Type{<:NamedTuple{<:Any, T}}) where T = backends(T)
@@ -72,7 +73,16 @@ end
              threads=config.threads, blocks=config.blocks)
     dest
 end
-
+## use style to drop_mtb
+function drop_mtb(Style)
+    @eval @inline mtb_materialize(bc::Broadcasted{<:$Style}, ::Integer) =
+        copy(instantiate(bc))
+    @eval @inline mtab_materialize(bc::Broadcasted{<:$Style}, ::Integer) =
+        tab_copy(instantiate(bc))
+    @eval @inline mtb_materialize!(::$Style, dest, bc::Broadcasted{Style}, ::Integer) where {Style} = 
+        copyto!(dest, instantiate(Broadcasted{Style}(bc.f, bc.args, axes(dest))))
+end
+drop_mtb(:AbstractGPUArrayStyle)
 ## AbstractWrapper
 import Base: print_array, show
 function map_show_copy(WrapperType::Symbol) 
@@ -114,6 +124,7 @@ end
     ## adapt_structure has been defined in StructArrays.jl
     map_show_copy(:StructArray)
     # unique
+    drop_mtb(:(StructArrayStyle{<:AbstractGPUArrayStyle}))
     forcedim0(::StructArrayStyle{Style}) where Style = StructArrayStyle{typeof(forcedim0(Style()))}()
 
     function Base.similar(bc::Broadcasted{StructArrayStyle{S}}, ::Type{ElType}) where {S,ElType}

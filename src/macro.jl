@@ -134,7 +134,7 @@ macro mtb(args...)
     end
     (!isa(nthread, Integer) || nthread <= 1) && return esc(ex)
     nthread = min(nthread, Threads.nthreads())
-    return esc(lowerhack(Self, ex, Template_mtb, Val(nthread)))
+    return esc(lowerhack(Self, ex, Template_mtb, nthread))
 end
 
 """
@@ -169,7 +169,7 @@ macro mtab(args...)
     (!isa(nthread, Integer) || nthread <= 1) &&
         return esc(lowerhack(Self, ex, Template_tab))
     nthread = min(nthread, Threads.nthreads())
-    return esc(lowerhack(Self, ex, Template_mtab, Val(nthread)))
+    return esc(lowerhack(Self, ex, Template_mtab, nthread))
 end
 
 """

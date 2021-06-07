@@ -1,31 +1,22 @@
 ## materialize
-@inline mtb_materialize(x, ::Any) = x
-@inline mtb_materialize(bc::Broadcasted, ::Val{TN}) where TN = begin
-    TN <= 1 && return copy(instantiate(bc))
+@inline mtb_materialize(x, ::Integer) = x
+@inline mtb_materialize(bc::Broadcasted, TN::Integer) =
     mtb_copy(instantiate(bc), TN)
-end
 
-@inline mtb_materialize!(dest, x, TN) = 
+@inline mtb_materialize!(dest, x, TN::Integer) =
     mtb_materialize!(dest, instantiate(Broadcasted(identity, (x,), axes(dest))), TN)
 
-@inline mtb_materialize!(dest, bc::Broadcasted{Style}, TN) where {Style} = 
+@inline mtb_materialize!(dest, bc::Broadcasted{Style}, TN::Integer) where {Style} =
     mtb_materialize!(combine_styles(dest, bc), dest, bc, TN)
 
-@inline function mtb_materialize!(
-    ::BroadcastStyle,
-    dest,
-    bc::Broadcasted{Style},
-    ::Val{TN}
-) where {Style,TN}
-    TN <= 1 && return copyto!(instantiate(bc))
+@inline mtb_materialize!(::BroadcastStyle, dest, bc::Broadcasted{Style}, TN::Integer) where {Style} =
     mtb_copyto!(dest, instantiate(Broadcasted{Style}(bc.f, bc.args, axes(dest))), TN)
-end
 
 ## copyto
-@inline mtb_copy(bc::Broadcasted{Style{Tuple}}, ::Any) = copy(bc)
-@inline mtb_copy(bc::FilledBC, ::Any) = copy(bc)
-@inline mtb_copy(bc::Broadcasted{<:Union{Nothing,Unknown}}, ::Any) = copy(bc)
-@inline function mtb_copy(bc::Broadcasted{Style}, TN) where Style
+@inline mtb_copy(bc::Broadcasted{Style{Tuple}}, ::Integer) = copy(bc)
+@inline mtb_copy(bc::FilledBC, ::Integer) = copy(bc)
+@inline mtb_copy(bc::Broadcasted{<:Union{Nothing,Unknown}}, ::Integer) = copy(bc)
+@inline function mtb_copy(bc::Broadcasted{Style}, TN::Integer) where {Style}
     ElType = combine_eltypes(bc.f, bc.args)
     if !Base.isconcretetype(ElType)
         @warn "$(ElType) is not concrete, invoke Base.copy"
@@ -35,13 +26,12 @@ end
 end
 
 ## copyto!
-@inline mtb_copyto!(dest::AbstractArray, bc::Broadcasted, TN) =
+@inline mtb_copyto!(dest::AbstractArray, bc::Broadcasted, TN::Integer) =
     mtb_copyto!(dest, convert(Broadcasted{Nothing}, bc), TN)
 
-@inline mtb_copyto!(dest::AbstractArray, bc::FilledBC, ::Any) = copyto!(dest, bc)
+@inline mtb_copyto!(dest::AbstractArray, bc::FilledBC, ::Integer) = copyto!(dest, bc)
 
-@inline function mtb_copyto!(dest::AbstractArray, bc::Broadcasted{Nothing}, TN)
-    device(dest) == AnyGPU && return gpu_copyto!(dest, bc)
+@inline function mtb_copyto!(dest::AbstractArray, bc::Broadcasted{Nothing}, TN::Integer)
     axes(dest) == axes(bc) || throwdm(axes(dest), axes(bc))
     if bc.f === identity && bc.args isa Tuple{AbstractArray}
         A = bc.args[1]
@@ -61,15 +51,16 @@ end
         nothing
     end
 
-        mtb_call(broadcast_kernel, Iˢs)
+    mtb_call(broadcast_kernel, Iˢs)
     dest
 end
 
 const bitcache_chunks_bits = 6
-@inline function mtb_copyto!(dest::BitArray, bc::Broadcasted{Nothing}, TN)
+@inline function mtb_copyto!(dest::BitArray, bc::Broadcasted{Nothing}, TN::Integer)
     axes(dest) == axes(bc) || throwdm(axes(dest), axes(bc))
     ischunkedbroadcast(dest, bc) && return chunkedcopyto!(dest, bc)
-    length(dest) < 256 && return invoke(copyto!, Tuple{AbstractArray,Broadcasted{Nothing}}, dest, bc)
+    length(dest) < 256 &&
+        return invoke(copyto!, Tuple{AbstractArray,Broadcasted{Nothing}}, dest, bc)
     destc = dest.chunks
     bc′ = preprocess(dest, bc)
     Inds = eachindex(bc′)
@@ -99,25 +90,19 @@ end
 using Polyester
 ## mtb_call
 @static if threads_provider == "Polyester"
-    function mtb_call(
-        @nospecialize(kernal::Function),
-        inds::AbstractRange{Int},
-    )
+    function mtb_call(@nospecialize(kernal::Function), inds::AbstractRange{Int})
         @batch for tid in eachindex(inds)
             kernal(inds[tid])
         end
         nothing
     end
 else
-    function mtb_call(
-        @nospecialize(kernal::Function), 
-        inds::AbstractRange{Int},
-    )
+    function mtb_call(@nospecialize(kernal::Function), inds::AbstractRange{Int})
         len = length(inds)
         @inbounds if len > 3
             len′ = len >> 1
             task = Threads.@spawn mtb_call(kernal, inds[1:len′])
-            mtb_call(kernal, inds[1 + len′:len])
+            mtb_call(kernal, inds[1+len′:len])
             wait(task)
         elseif len == 3
             task₁ = Threads.@spawn kernal(inds[1])
@@ -135,12 +120,8 @@ else
 end
 
 ##Multi-threading config
-@inline function mtb_config(
-    thread_num::Integer,
-    ax::AbstractArray,
-    min_size::Integer=1,
-)
-    Iˢ, Iᵉ = Ref(ax) .|> (firstindex, lastindex) 
+@inline function mtb_config(thread_num::Integer, ax::AbstractArray, min_size::Integer = 1)
+    Iˢ, Iᵉ = Ref(ax) .|> (firstindex, lastindex)
     len = cld(length(ax), thread_num * min_size) * min_size
-    len - 1, Iᵉ, Iˢ .+ len .* (0:cld(length(ax), len) - 1)
+    len - 1, Iᵉ, Iˢ .+ len .* (0:cld(length(ax), len)-1)
 end
