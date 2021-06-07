@@ -33,8 +33,8 @@ end
 import Base.Broadcast: throwdm, AbstractArrayStyle, Unknown, combine_eltypes,
     preprocess, Broadcasted, DefaultArrayStyle, ischunkedbroadcast, chunkedcopyto!, bitcache_size, 
     dumpbitcache, bitcache_chunks, materialize!, BroadcastStyle, combine_styles, instantiate, 
-    roadcastable, broadcast_unalias, Style, _broadcast_getindex
-import Base: size, axes, setindex!, unalias, mightalias, unaliascopy, IndexStyle, parent
+    broadcastable, broadcast_unalias, Style, _broadcast_getindex
+import Base: size, axes, setindex!, unalias, mightalias, unaliascopy, IndexStyle, parent, unsafe_setindex!
 const FilledBC = Broadcasted{<:AbstractArrayStyle{0}}
 const AllLinear = true
 const AnyCartesian = false
@@ -65,11 +65,11 @@ axes(td::TupleDummy) = td.ax
 LTD{N} = TupleDummy{T,N,AllLinear} where {T}
 Base.IndexStyle(::LTD) = IndexLinear()
 @inline setindex!(td::LTD, value::Tuple, ix::Int) =
-    fmap((a, v) -> (@inbounds a[ix] = v), td.arrays, value)
+    fmap((a, v) -> unsafe_setindex!(a, v, ix) , td.arrays, value)
 CTD{N} = TupleDummy{T,N,AnyCartesian} where {T}
 Base.IndexStyle(::CTD) = IndexCartesian()
 @inline setindex!(td::CTD{N}, value::Tuple, ixs::Vararg{Int,N}) where {N} =
-    fmap((a, v) -> (@inbounds a[ixs...] = v), td.arrays, value)
+    fmap((a, v) -> unsafe_setindex!(a, v, ixs...) , td.arrays, value)
 
 @inline unalias(dest::TupleDummy, A::AbstractRange) = A
 @inline unalias(dest::TupleDummy, A::AbstractArray) =

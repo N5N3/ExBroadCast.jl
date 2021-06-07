@@ -1,47 +1,36 @@
 using Base.Meta
 const Self = @__MODULE__
-GR(x, y) = GlobalRef(x, y)
-
 const Template_mtb = IdDict(
-    GR(Self, :tab_broadcast) => GR(Self, :mtab_broadcast),
-    GR(Base, :materialize) => GR(Self, :mtb_materialize),
-    GR(Base, :materialize!) => GR(Self, :mtb_materialize!),
-    GR(Self, :tab_materialize) => GR(Self, :mtab_materialize),
+    GlobalRef(Base, :materialize) => GlobalRef(Self, :mtb_materialize),
+    GlobalRef(Base, :materialize!) => GlobalRef(Self, :mtb_materialize!),
+    GlobalRef(Self, :tab_materialize) => GlobalRef(Self, :mtab_materialize),
 )
-
 const Template_tab = IdDict(
-    GR(Self, :mtb_broadcast) => GR(Self, :mtab_broadcast),
-    GR(Base, :materialize) => GR(Self, :tab_materialize),
-    GR(Self, :mtb_materialize) => GR(Self, :mtab_materialize),
+    GlobalRef(Base, :materialize) => GlobalRef(Self, :tab_materialize),
+    GlobalRef(Self, :mtb_materialize) => GlobalRef(Self, :mtab_materialize),
 )
-
 const Template_mtab = IdDict(
-    GR(Base, :materialize!) => GR(Self, :mtb_materialize!),
-    GR(Base, :materialize) => GR(Self, :mtab_materialize),
+    GlobalRef(Base, :materialize!) => GlobalRef(Self, :mtb_materialize!),
+    GlobalRef(Base, :materialize) => GlobalRef(Self, :mtab_materialize),
 )
 
-const Template_lzb = IdDict(GR(Base, :materialize) => GR(Base.Broadcast, :instantiate))
+const Template_lzb = IdDict(
+    GlobalRef(Base, :materialize) => GlobalRef(Base.Broadcast, :instantiate),
+)
 ## general function
 using MacroTools
 # use @goto and @label to repalce Core.GotoNode Expr(:gotoifnot)
 function correctgoto!(code)
     function get_tag(tar)
-        if Meta.isexpr(code[tar], :block) #target line has been repalced
-            tag = code[tar].args[1].args[1]
-        else
-            tag = gensym(:𝐠𝐨𝐭𝐨𝐧𝐨𝐝𝐞)
-            code[tar] = Expr(:block, Expr(:symboliclabel, tag), code[tar])
-        end
+        #target line has been repalced
+        Meta.isexpr(code[tar], :block) && return code[tar].args[1].args[1]
+        tag = gensym(:𝐠𝐨𝐭𝐨𝐧𝐨𝐝𝐞)
+        code[tar] = Expr(:block, Expr(:symboliclabel, tag), code[tar])
         tag
     end
     @inbounds for k in eachindex(code)
         if code[k] isa Core.GotoIfNot
-            code[k] = Expr(
-                :if,
-                code[k].cond,
-                Expr(:block),
-                Expr(:symbolicgoto, get_tag(code[k].dest)),
-            )
+            code[k] = Expr(:||, code[k].cond, Expr(:symbolicgoto, get_tag(code[k].dest)))
         elseif code[k] isa Core.GotoNode
             code[k] = Expr(:symbolicgoto, get_tag(code[k].label))
         end
@@ -49,9 +38,9 @@ function correctgoto!(code)
     code
 end
 # replace temparay variables <: Union{SlotNumber,SSAValue}
-replacetemp(ex, args...) = ex
-replacetemp(ex::Core.Slot, SSAs, Slots) = @inbounds Slots[ex.id]
-replacetemp(ex::Core.SSAValue, SSAs, Slots) = @inbounds SSAs[ex.id]
+replacetemp(ex, syms) = ex
+replacetemp(ex::Core.Slot, syms) = Symbol(syms, "_slot_", ex.id)
+replacetemp(ex::Core.SSAValue, syms) = Symbol(syms, "_ssa_", ex.id)
 # replace broadcast(!) and materialize(!)
 replacecall(ex, args...) = ex
 function replacecall(ex::Expr, temps::AbstractDict, addargs)
@@ -73,7 +62,7 @@ function replacereturn(ex::Expr, Result, EndPoint)
     ex
 end
 
-function replacebroadcast(ex)
+function expandbroadcast(ex)
     Meta.isexpr(ex, :call) || return ex
     if ex.args[1] === :broadcast
         ex.args[1] = GlobalRef(Base, :broadcasted)
@@ -90,31 +79,29 @@ function keepreturn(ex)
     ex
 end
 
-function addeq(ex, syms::Symbol)
+function addeq(ex, syms::Symbol, id)
     Meta.isexpr(ex, :call) ||
         ex isa Symbol ||
         ex isa Core.Slot ||
         ex isa GlobalRef ||
         return ex
-    :(local $syms = $ex)
+    :(local $(Symbol(syms, "_ssa_", id)) = $ex)
 end
 
 function lowerhack(mod::Module, ex::Expr, temps, addarg = nothing)
     ex = MacroTools.postwalk(ex) do x
-        x = replacebroadcast(x)
+        x = expandbroadcast(x)
         x = keepreturn(x)
     end
     ci = Meta.lower(mod, ex)
     ci.head === :error && error(ci.args[1])
     code = first(ci.args).code
-    Slots = first(ci.args).slotnames
-    SSAs = [gensym(:𝐭𝐞𝐦𝐩𝐯𝐚𝐫) for _ in eachindex(code)]
-    Result, EndPoint = gensym(:𝐫𝐞𝐬𝐮𝐥𝐭), gensym(:𝐞𝐧𝐝𝐩𝐨𝐢𝐧𝐭)
-    code .= addeq.(code, SSAs)
+    TempVar, Result, EndPoint = gensym(:𝐭𝐞𝐦𝐩𝐯𝐚𝐫), gensym(:𝐫𝐞𝐬𝐮𝐥𝐭), gensym(:𝐞𝐧𝐝𝐩𝐨𝐢𝐧𝐭)
+    code .= addeq.(code, TempVar, eachindex(code))
     code .= replacereturn.(code, Result, EndPoint)
     exblock = Expr(:block, correctgoto!(code)...)
     exblock = MacroTools.postwalk(exblock) do x
-        x = replacetemp(x, SSAs, Slots)
+        x = replacetemp(x, TempVar)
         x = replacecall(x, temps, addarg)
         x = MacroTools.flatten1(x)
     end
@@ -146,6 +133,7 @@ macro mtb(args...)
         error("Invalid input")
     end
     (!isa(nthread, Integer) || nthread <= 1) && return esc(ex)
+    nthread = min(nthread, Threads.nthreads())
     return esc(lowerhack(Self, ex, Template_mtb, Val(nthread)))
 end
 
@@ -180,6 +168,7 @@ macro mtab(args...)
     end
     (!isa(nthread, Integer) || nthread <= 1) &&
         return esc(lowerhack(Self, ex, Template_tab))
+    nthread = min(nthread, Threads.nthreads())
     return esc(lowerhack(Self, ex, Template_mtab, Val(nthread)))
 end
 
