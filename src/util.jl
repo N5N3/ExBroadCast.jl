@@ -220,6 +220,8 @@ function copyto_unaliased!(::IndexCartesian, dest::AbstractArray, ::IndexLinear,
 end
 
 function copyto_unaliased!(::IndexCartesian, dest::AbstractArray, ::IndexCartesian, src::AbstractArray)
+    isempty(src) && return dest
+    length(dest) < length(src) && throw(BoundsError(dest, LinearIndices(src)))
     iterdest, itersrc = eachindex(dest), eachindex(src)
     if iterdest == itersrc
         iter = itersrc
