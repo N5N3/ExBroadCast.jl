@@ -160,6 +160,7 @@ function copyto_unaliased!(::IndexLinear, dest::AbstractArray, ::IndexLinear, sr
     for i in eachindex(IndexLinear(), src)
         @inbounds dest[i + Δi] = src[i]
     end
+    return dest
 end
 
 function copyto_unaliased!(::IndexLinear, dest::AbstractArray, ::IndexStyle, src::AbstractArray)
@@ -180,6 +181,7 @@ function copyto_unaliased!(::IndexLinear, dest::AbstractArray, ::IndexStyle, src
             @inbounds dest[j += 1] = src[I]
         end
     end
+    return dest
 end
 
 function copyto_unaliased!(::IndexCartesian, dest::AbstractArray, ::IndexLinear, src::AbstractArray)
