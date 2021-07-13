@@ -22,12 +22,12 @@ using MacroTools
 # use @goto and @label to repalce Core.GotoNode Expr(:gotoifnot)
 function correctgoto!(code)
     function get_tag(tar)
-        #target line has been repalced
-        Meta.isexpr(code[tar], :block) && return code[tar].args[1].args[1]
-        tag = gensym(:𝐠𝐨𝐭𝐨𝐧𝐨𝐝𝐞)
-        code[tar] = Expr(:block, Expr(:symboliclabel, tag), code[tar])
-        tag
+        if !Meta.isexpr(code[tar], :block)
+            code[tar] = Expr(:block, Expr(:symboliclabel, Symbol(tag, tar), code[tar]))
+        end
+        Symbol(tag, tar)
     end
+    tag = gensym(:𝐠𝐨𝐭𝐨𝐧𝐨𝐝𝐞)
     @inbounds for k in eachindex(code)
         if code[k] isa Core.GotoIfNot
             code[k] = Expr(:||, code[k].cond, Expr(:symbolicgoto, get_tag(code[k].dest)))
@@ -38,27 +38,24 @@ function correctgoto!(code)
     code
 end
 # replace temparay variables <: Union{SlotNumber,SSAValue}
+replacetemp(syms) = Base.Fix2(replacetemp, syms)
 replacetemp(ex, syms) = ex
 replacetemp(ex::Core.Slot, syms) = Symbol(syms, "_slot_", ex.id)
 replacetemp(ex::Core.SSAValue, syms) = Symbol(syms, "_ssa_", ex.id)
 # replace broadcast(!) and materialize(!)
-replacecall(ex, args...) = ex
-function replacecall(ex::Expr, temps::AbstractDict, addargs)
-    @inbounds if ex.head === :call
-        func = ex.args[1]
-        ex.args[1] = get(temps, func, func)
-        if !isnothing(addargs) && ex.args[1] !== func
-            push!(ex.args, addargs)
-        end
+function replacecall(ex, temps::AbstractDict, addargs)
+    Meta.isexpr(ex, :call) || return ex
+    func = ex.args[1]
+    ex.args[1] = get(temps, func, func)
+    if !isnothing(addargs) && ex.args[1] !== func
+        push!(ex.args, addargs)
     end
     ex
 end
 # replace return
-replacereturn(ex, args...) = ex
-replacereturn(ex::Core.ReturnNode, Result, EndPoint) =
-    Expr(:block, :(local $Result = $(ex.val)), Expr(:symbolicgoto, EndPoint))
-function replacereturn(ex::Expr, Result, EndPoint)
-    ex.head === :call && ex.args[1] === :𝐫𝐞𝐭𝐮𝐫𝐧 && return :(return $(ex.args[2]))
+function replacereturn(ex, Result, EndPoint) 
+    ex isa Core.ReturnNode && return Expr(:block, :(local $Result = $(ex.val)), Expr(:symbolicgoto, EndPoint))
+    Meta.isexpr(ex, :call) && ex.args[1] === :𝐫𝐞𝐭𝐮𝐫𝐧 && return :(return $(ex.args[2]))
     ex
 end
 
@@ -75,8 +72,8 @@ function expandbroadcast(ex)
 end
 
 function keepreturn(ex)
-    Meta.isexpr(ex, :return) && return Expr(:call, :𝐫𝐞𝐭𝐮𝐫𝐧, ex.args[1])
-    ex
+    Meta.isexpr(ex, :return) || return ex
+    Expr(:call, :𝐫𝐞𝐭𝐮𝐫𝐧, ex.args[1])
 end
 
 function addeq(ex, syms::Symbol, id)
@@ -89,24 +86,17 @@ function addeq(ex, syms::Symbol, id)
 end
 
 function lowerhack(mod::Module, ex::Expr, temps, addarg = nothing)
-    ex = MacroTools.postwalk(ex) do x
-        x = expandbroadcast(x)
-        x = keepreturn(x)
-    end
+    ex = MacroTools.postwalk(∘(keepreturn, expandbroadcast), ex) 
     ci = Meta.lower(mod, ex)
     ci.head === :error && error(ci.args[1])
-    code = first(ci.args).code
-    TempVar, Result, EndPoint = gensym(:𝐭𝐞𝐦𝐩𝐯𝐚𝐫), gensym(:𝐫𝐞𝐬𝐮𝐥𝐭), gensym(:𝐞𝐧𝐝𝐩𝐨𝐢𝐧𝐭)
-    code .= addeq.(code, TempVar, eachindex(code))
+    code = only(ci.args).code
+    TempVar, Result, EndPoint = (:𝐭𝐞𝐦𝐩𝐯𝐚𝐫, :𝐫𝐞𝐬𝐮𝐥𝐭, :𝐞𝐧𝐝𝐩𝐨𝐢𝐧𝐭) .|> gensym
     code .= replacereturn.(code, Result, EndPoint)
+    code .= replacecall.(code, Ref(temps), Ref(addarg))
+    code .= addeq.(code, TempVar, eachindex(code))
     exblock = Expr(:block, correctgoto!(code)...)
-    exblock = MacroTools.postwalk(exblock) do x
-        x = replacetemp(x, TempVar)
-        x = replacecall(x, temps, addarg)
-        x = MacroTools.flatten1(x)
-    end
-    ## final add
-    exblock.args[end] = Expr(:symboliclabel, EndPoint)
+    exblock = MacroTools.postwalk(replacetemp(TempVar), exblock)
+    push!(exblock.args, Expr(:symboliclabel, EndPoint))
     push!(exblock.args, Result)
     exblock
 end

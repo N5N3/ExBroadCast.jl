@@ -91,13 +91,13 @@ function drop_mtb(Style)
 end
 drop_mtb(:AbstractGPUArrayStyle)
 ## AbstractWrapper
-import Base: print_array, show
+# import Base: print_array, show
 function map_show_copy(WrapperType::Symbol)
-    @eval trycollect(X::$WrapperType) = device(X) == AnyGPU ? adapt(Array, X) : X
-    for dispfun in (:print_array, :show)
-        @eval $dispfun(io::IO, X::$WrapperType{T,N}) where {T,N} =
-            invoke($dispfun, Tuple{IO,AbstractArray{T,N}}, io, trycollect(X))
-    end
+    # @eval trycollect(X::$WrapperType) = device(X) == AnyGPU ? adapt(Array, X) : X
+    # for dispfun in (:print_array, :show)
+    #     @eval $dispfun(io::IO, X::$WrapperType{T,N}) where {T,N} =
+    #         invoke($dispfun, Tuple{IO,AbstractArray{T,N}}, io, trycollect(X))
+    # end
 
     @eval @inline copyto!(dest::$WrapperType, bc::Broadcasted{Nothing}) = begin
         device(dest) == AnyGPU && return gpu_copyto!(dest, bc)
@@ -132,13 +132,9 @@ end
     map_show_copy(:StructArray)
     # unique
     drop_mtb(:(StructArrayStyle{<:AbstractGPUArrayStyle}))
-    forcedim0(::StructArrayStyle{Style}) where {Style} =
-        StructArrayStyle{typeof(forcedim0(Style()))}()
+    forcedim0(::StructArrayStyle{Style}) where {Style} = StructArrayStyle{typeof(forcedim0(Style()))}()
 
-    function Base.similar(
-        bc::Broadcasted{StructArrayStyle{S}},
-        ::Type{ElType},
-    ) where {S,ElType}
+    function Base.similar(bc::Broadcasted{StructArrayStyle{S}}, ::Type{ElType}) where {S,ElType}
         bc′ = convert(Broadcasted{S}, bc)
         if isstructtype(ElType)
             return StructArrays.buildfromschema(T -> similar(bc′, T), ElType)

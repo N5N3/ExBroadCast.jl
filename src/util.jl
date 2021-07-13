@@ -2,8 +2,9 @@ export Lazy, eachdim′, eachcol′, eachrow′, eachslice′
 # getsame
 @inline getsame(f::F, x) where {F} = f(x)
 @inline getsame(f::F, x, y, zs...) where {F} = begin
-    f(x) == getsame(f, y, zs...) || throw(ArgumentError("inputs with different $f"))
-    f(x)
+    fx = getsame(f, y, zs...)
+    f(x) == fx || throw(ArgumentError("inputs with different $f"))
+    fx
 end
 
 # force inlined map that return nothing
@@ -19,17 +20,14 @@ end
     fmap(f, Base.tail(t₁), Base.tail(t₂))
 end
 
-
 ### import many funtions
 import Base.Broadcast: throwdm, AbstractArrayStyle, Unknown, combine_eltypes,
     preprocess, Broadcasted, DefaultArrayStyle, ischunkedbroadcast, chunkedcopyto!, bitcache_size, 
     dumpbitcache, bitcache_chunks, materialize!, BroadcastStyle, combine_styles, instantiate, 
     broadcastable, broadcast_unalias, Style, _broadcast_getindex, broadcasted
 import Base: size, axes, setindex!, unalias, mightalias, unaliascopy, IndexStyle, parent, 
-    unsafe_setindex!, copyto!
+    unsafe_setindex!, copyto!, IndexStyle
 const FilledBC = Broadcasted{<:AbstractArrayStyle{0}}
-const AllLinear = true
-const AnyCartesian = false
 """
     TupleDummy(arrays::Tuple)
 Dummy structure for broadcast with multiple outputs.
@@ -38,28 +36,24 @@ A simplified SoA implementation.
 """
 struct TupleDummy{T,N,L,As,AXs} <: AbstractArray{T,N}
     arrays::As
-    ax::AXs      # add this field to avoid repeated Base.OneTo()
+    ax::AXs
     TupleDummy{T,N,L}(arrays::As, ax::AXs) where {T,N,L,As,AXs} =
         new{T,N,L,As,AXs}(arrays, ax)
 end
+
 function TupleDummy(arrays::Tuple{AbstractArray,AbstractArray,Vararg{AbstractArray}}) ## at least 2 outputs
     ax = getsame(axes, arrays...)
-    LinearFLag = mapreduce((x) -> IndexStyle(x) isa IndexLinear, &, arrays)
+    Style = IndexStyle(arrays...) |> typeof
     ElType = Tuple{eltype.(arrays)...}
     TupleDummy{ElType,length(ax),LinearFLag}(arrays, ax)
 end
 parent(td::TupleDummy) = td.arrays
 size(td::TupleDummy, args...) = size(td.arrays[1], args...)
 axes(td::TupleDummy) = td.ax
-
-
-LTD{N} = TupleDummy{T,N,AllLinear} where {T}
-Base.IndexStyle(::LTD) = IndexLinear()
-@inline setindex!(td::LTD, value::Tuple, ix::Int) =
+IndexStyle(T::Type{<:TupleDummy}) = T.parameters[3]()
+@inline setindex!(td::TupleDummy{T,N,IndexLinear}, value::Tuple, ix::Int) where {T,N} =
     fmap((a, v) -> unsafe_setindex!(a, v, ix) , td.arrays, value)
-CTD{N} = TupleDummy{T,N,AnyCartesian} where {T}
-Base.IndexStyle(::CTD) = IndexCartesian()
-@inline setindex!(td::CTD{N}, value::Tuple, ixs::Vararg{Int,N}) where {N} =
+@inline setindex!(td::TupleDummy{T,N,IndexCartesian}, value::Tuple, ixs::Vararg{Int,N}) where {T,N} =
     fmap((a, v) -> unsafe_setindex!(a, v, ixs...) , td.arrays, value)
 
 @inline unalias(dest::TupleDummy, A::AbstractRange) = A
@@ -77,7 +71,7 @@ function toa_similar(bc::Broadcasted)
     ElType <: Tuple{Any,Vararg{Any}} && Base.isconcretetype(ElType) ||
         throw(ArgumentError("$ElType is not a legal return type for @tab!"))
     dest = map(T -> _similar(bc, T), tuple(ElType.parameters...))
-    TupleDummy{ElType,ndims(bc),AllLinear}(dest, axes(bc))
+    TupleDummy{ElType,ndims(bc),IndexLinear}(dest, axes(bc))
 end
 
 module LazyCollect
@@ -115,18 +109,16 @@ Base.size(id::FakeDim{N,S}) where {N,S} = (ntuple(_ -> 1, Val(S - 1))..., size(i
     id.data[I[S:N]...]
 BroadcastStyle(::Type{ID}) where {ID<:FakeDim} =
     ID.parameters[4] <: Tuple ? DefaultArrayStyle{ID.parameters[1]}() :
-    BroadcastStyle(ID.parameters[4])
+                                BroadcastStyle(ID.parameters[4])
 
 # Lazy is used to wrap Generator/Productor to avoid collect before broadcast.
 struct Lazy{P}
     ori::P
 end
 Lazy(l::Lazy) = l
+Base.size(l::Lazy) = size(l.ori)
 @inline Base.collect(l::Lazy) = collect(l.ori)
 @inline Base.iterate(l::Lazy, args...) = iterate(l.ori, args...)
-@inline Base.simd_outer_range(l::Lazy) = Base.simd_outer_range(l.ori)
-@inline Base.simd_inner_length(l::Lazy, args...) = Base.simd_inner_length(l.ori, args...)
-@inline Base.simd_index(l::Lazy, args...) = Base.simd_index(l.ori, args...)
 
 @inline broadcastable(l::Lazy) = lazycollect(l.ori)
 @inline lazycollect(x) = broadcastable(x)
@@ -156,4 +148,98 @@ function eachslice′(A::AbstractArray; dim::Val{D}) where {D}
     inds_before = ntuple(d -> (:), D - 1)
     inds_after = ntuple(d -> (:), ndims(A) - D)
     Lazy(unsafe_view(A, inds_before..., i, inds_after...) for i in axes(A, D))
+end
+
+import Base: copyto_unaliased!, simd_outer_range, simd_inner_length, simd_index
+
+# IndexCartesian and CartesianIndices has not been defined, only implement Linear to Linear here.
+function copyto_unaliased!(::IndexLinear, dest::AbstractArray, ::IndexLinear, src::AbstractArray)
+    isempty(src) && return dest
+    length(dest) < length(src) && throw(BoundsError(dest, LinearIndices(src)))
+    Δi = firstindex(dest) - firstindex(src)
+    for i in eachindex(IndexLinear(), src)
+        @inbounds dest[i + Δi] = src[i]
+    end
+end
+
+function copyto_unaliased!(::IndexLinear, dest::AbstractArray, ::IndexStyle, src::AbstractArray)
+    isempty(src) && return dest
+    length(dest) < length(src) && throw(BoundsError(dest, LinearIndices(src)))
+    iter, j = eachindex(src), firstindex(dest) - 1
+    if size(src, 1) >= 16
+        # manually expand the inner loop similar to @simd
+        @inbounds for II in simd_outer_range(iter)
+            n = 0
+            while n < simd_inner_length(iter, II)
+                dest[j += 1] = src[simd_index(iter, II, n)]
+                n += 1
+            end
+        end
+    else
+        for I in iter
+            @inbounds dest[j += 1] = src[I]
+        end
+    end
+end
+
+function copyto_unaliased!(::IndexCartesian, dest::AbstractArray, ::IndexLinear, src::AbstractArray)
+    isempty(src) && return dest
+    length(dest) < length(src) && throw(BoundsError(dest, LinearIndices(src)))
+    iter, i = eachindex(dest), firstindex(src) - 1
+    if size(dest, 1) >= 16
+        # manually expand the inner loop similar to @simd
+        final = lastindex(src)
+        @inbounds for II in simd_outer_range(iter)
+            n, len = 0, simd_inner_length(iter, II)
+            if i + len < final
+                while n < len
+                    dest[simd_index(iter, II, n)] = src[i += 1]
+                    n += 1
+                end
+                continue
+            end
+            while i < final
+                dest[simd_index(iter, II, n)] = src[i += 1]
+                n += 1
+            end
+            break
+        end
+    elseif length(dest) == length(src)
+        for I in iter
+            @inbounds dest[I] = src[i += 1]
+        end
+    else
+        # use zip based interator
+        @inbounds for (I, J) in zip(eachindex(src), iter) 
+            dest[J] = src[I]
+        end
+    end
+    return dest
+end
+
+function copyto_unaliased!(::IndexCartesian, dest::AbstractArray, ::IndexCartesian, src::AbstractArray)
+    iterdest, itersrc = eachindex(dest), eachindex(src)
+    if iterdest == itersrc
+        iter = itersrc
+        if size(src, 1) >= 16
+            # manually expand the inner loop similar to @simd
+            @inbounds for II in simd_outer_range(iter)
+                n = 0
+                while n < simd_inner_length(iter, II)
+                    I = simd_index(iter, II, n)
+                    dest[I] = src[I]
+                    n += 1
+                end
+            end
+        else
+            for I in iter
+                @inbounds dest[I] = src[I]
+            end
+        end
+    else
+        @inbounds for (J, I) in zip(iterdest, itersrc) 
+            dest[J] = src[I]
+        end
+    end
+    return dest
 end
