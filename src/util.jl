@@ -45,7 +45,7 @@ function TupleDummy(arrays::Tuple{AbstractArray,AbstractArray,Vararg{AbstractArr
     ax = getsame(axes, arrays...)
     Style = IndexStyle(arrays...) |> typeof
     ElType = Tuple{eltype.(arrays)...}
-    TupleDummy{ElType,length(ax),LinearFLag}(arrays, ax)
+    TupleDummy{ElType,length(ax),Style}(arrays, ax)
 end
 parent(td::TupleDummy) = td.arrays
 size(td::TupleDummy, args...) = size(td.arrays[1], args...)
@@ -163,7 +163,7 @@ function copyto_unaliased!(::IndexLinear, dest::AbstractArray, ::IndexLinear, sr
     return dest
 end
 
-function copyto_unaliased!(::IndexLinear, dest::AbstractArray, ::IndexStyle, src::AbstractArray)
+function copyto_unaliased!(::IndexLinear, dest::AbstractArray, ::IndexCartesian, src::AbstractArray)
     isempty(src) && return dest
     length(dest) < length(src) && throw(BoundsError(dest, LinearIndices(src)))
     iter, j = eachindex(src), firstindex(dest) - 1
@@ -212,8 +212,8 @@ function copyto_unaliased!(::IndexCartesian, dest::AbstractArray, ::IndexLinear,
         end
     else
         # use zip based interator
-        @inbounds for (I, J) in zip(eachindex(src), iter) 
-            dest[J] = src[I]
+        for (I, J) in zip(eachindex(src), iter) 
+            @inbounds dest[J] = src[I]
         end
     end
     return dest
@@ -241,8 +241,8 @@ function copyto_unaliased!(::IndexCartesian, dest::AbstractArray, ::IndexCartesi
             end
         end
     else
-        @inbounds for (J, I) in zip(iterdest, itersrc) 
-            dest[J] = src[I]
+        for (J, I) in zip(iterdest, itersrc) 
+            @inbounds dest[J] = src[I]
         end
     end
     return dest

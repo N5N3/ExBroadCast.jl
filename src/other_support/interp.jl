@@ -99,7 +99,7 @@ end
 
     #make checkbounds work on gpu
     allbetween(l::Real, xs::AbstractArray, u::Real) = begin
-        device(xs) == AnyGPU && return all(x -> l <= x <= u, xs)
+        device(xs) isa GPU && return all(x -> l <= x <= u, xs)
         invoke(allbetween, Tuple{typeof(l),Any,typeof(u)}, l, xs, u)
     end
 

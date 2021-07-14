@@ -4,7 +4,7 @@ import GPUArrays: backend, gpu_call, linear_index, launch_heuristic, launch_conf
     
 # check the backend
 using ArrayInterface
-const AnyGPU = ArrayInterface.GPU()
+const GPU = ArrayInterface.GPU
 device(::Type{T}) where {T} = ArrayInterface.device(T)
 device(x) = typeof(x) |> device
 devices(::Type{<:NamedTuple{<:Any,T}}) where {T} = devices(T)
@@ -23,7 +23,7 @@ adapt_structure(to, td::TupleDummy{T,N,L}) where {T,N,L} =
     TupleDummy{T,N,L}(adapts(to, td.arrays...), td.ax)
 
 @inline function copyto!(dest::TupleDummy, bc::Broadcasted{Nothing})
-    device(dest) === AnyGPU && return gpu_copyto!(dest, bc)
+    device(dest) isa GPU && return gpu_copyto!(dest, bc)
     invoke(copyto!, Tuple{AbstractArray,Broadcasted{Nothing}}, dest, bc)
 end
 
@@ -60,14 +60,14 @@ end
 @inline function gpu_copyto!(dest::AbstractArray, bc::Broadcasted{Nothing})
     axes(dest) == axes(bc) || throwdm(axes(dest), axes(bc))
     isempty(dest) && return dest
-    bc′ = Broadcast.preprocess(dest, bc)
+    bc′ = preprocess(dest, bc)
 
     function broadcast_kernel(ctx, dest, bc′, nelem)
         Inds = eachindex(bc′)
-        Iˢ, Iᵉ = Ref(Inds) .|> (firstindex, lastindex)
+        Iˢ, Iᵉ = firstindex(Inds), lastindex(Inds)
         @inbounds for i = 1:nelem
             j = linear_index(ctx, i) + Iˢ - 1
-            j > Iᵉ && return nothing
+            j > Iᵉ && return
             I = Inds[j]
             dest[I] = bc′[I]
         end
@@ -100,7 +100,7 @@ function map_show_copy(WrapperType::Symbol)
     # end
 
     @eval @inline copyto!(dest::$WrapperType, bc::Broadcasted{Nothing}) = begin
-        device(dest) == AnyGPU && return gpu_copyto!(dest, bc)
+        device(dest) isa GPU && return gpu_copyto!(dest, bc)
         invoke(copyto!, Tuple{AbstractArray,Broadcasted{Nothing}}, dest, bc)
     end
 

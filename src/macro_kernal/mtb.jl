@@ -121,7 +121,7 @@ end
 
 ##Multi-threading config
 @inline function mtb_config(thread_num::Integer, ax::AbstractArray, min_size::Integer = 1)
-    Iˢ, Iᵉ = Ref(ax) .|> (firstindex, lastindex)
+    Iˢ, Iᵉ = firstindex(ax), lastindex(ax)
     len = cld(length(ax), thread_num * min_size) * min_size
     len - 1, Iᵉ, Iˢ:len:Iᵉ
 end
