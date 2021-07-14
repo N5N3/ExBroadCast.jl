@@ -21,21 +21,22 @@ const Template_lzb = IdDict(
 using MacroTools
 # use @goto and @label to repalce Core.GotoNode Expr(:gotoifnot)
 function correctgoto!(code)
-    function get_tag(tar)
+    get_tag(tar) = begin
         if !Meta.isexpr(code[tar], :block)
-            code[tar] = Expr(:block, Expr(:symboliclabel, Symbol(tag, tar), code[tar]))
+            code[tar] = Expr(:block, Expr(:symboliclabel, Symbol(tag, tar)), code[tar])
         end
         Symbol(tag, tar)
     end
-    tag = gensym(:𝐠𝐨𝐭𝐨𝐧𝐨𝐝𝐞)
-    @inbounds for k in eachindex(code)
-        if code[k] isa Core.GotoIfNot
-            code[k] = Expr(:||, code[k].cond, Expr(:symbolicgoto, get_tag(code[k].dest)))
-        elseif code[k] isa Core.GotoNode
-            code[k] = Expr(:symbolicgoto, get_tag(code[k].label))
+    replace(ex::Core.GotoIfNot) = Expr(:||, ex.cond, Expr(:symbolicgoto, get_tag(ex.dest)))
+    replace(ex::Core.GotoNode) = Expr(:symbolicgoto, get_tag(ex.label))
+    replace(ex) = begin
+        if Meta.isexpr(ex, :block)
+            ex.args[2] = replace(ex.args[2])
         end
+        ex
     end
-    code
+    tag = gensym(:𝐠𝐨𝐭𝐨𝐧𝐨𝐝𝐞)
+    code .= replace.(code)
 end
 # replace temparay variables <: Union{SlotNumber,SSAValue}
 replacetemp(syms) = Base.Fix2(replacetemp, syms)
@@ -62,11 +63,11 @@ end
 function expandbroadcast(ex)
     Meta.isexpr(ex, :call) || return ex
     if ex.args[1] === :broadcast
-        ex.args[1] = GlobalRef(Base, :broadcasted)
-        return :($(GlobalRef(Base, :materialize))($ex))
+        ex.args[1] = :(Base.broadcasted)
+        return :(Base.materialize($ex))
     elseif ex.args[1] === :broadcast!
-        ex′ = Expr(:call, GlobalRef(Base, :broadcasted), ex.args[2], ex.args[4:end]...)
-        return :($(GlobalRef(Base, :materialize!))($(ex.args[3]), $ex′))
+        ex′ = Expr(:call, :(Base.broadcasted), ex.args[2], ex.args[4:end]...)
+        return :(Base.materialize!($(ex.args[3]), $ex′))
     end
     ex
 end
@@ -90,17 +91,21 @@ function lowerhack(mod::Module, ex::Expr, temps, addarg = nothing)
     ci = Meta.lower(mod, ex)
     ci.head === :error && error(ci.args[1])
     code = only(ci.args).code
-    TempVar, Result, EndPoint = (:𝐭𝐞𝐦𝐩𝐯𝐚𝐫, :𝐫𝐞𝐬𝐮𝐥𝐭, :𝐞𝐧𝐝𝐩𝐨𝐢𝐧𝐭) .|> gensym
-    code .= replacereturn.(code, Result, EndPoint)
-    code .= replacecall.(code, Ref(temps), Ref(addarg))
-    code .= addeq.(code, TempVar, eachindex(code))
+    TempVar = gensym(:𝐭𝐞𝐦𝐩𝐯𝐚𝐫)
+    Result = gensym(:𝐫𝐞𝐬𝐮𝐥𝐭)
+    EndPoint = gensym(:𝐞𝐧𝐝𝐩𝐨𝐢𝐧𝐭)
+    proc(x, i) = begin
+        x = replacereturn(x, Result, EndPoint)
+        x = replacecall(x, temps, addarg)
+        addeq(x, TempVar, i)
+    end
+    code .= proc.(code, 1:length(code))
     exblock = Expr(:block, correctgoto!(code)...)
     exblock = MacroTools.postwalk(replacetemp(TempVar), exblock)
     push!(exblock.args, Expr(:symboliclabel, EndPoint))
     push!(exblock.args, Result)
     exblock
 end
-
 
 """
 **Example:**
