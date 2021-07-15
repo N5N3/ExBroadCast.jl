@@ -19,7 +19,7 @@
 @inline function mtb_copy(bc::Broadcasted{Style}, TN::Integer) where {Style}
     ElType = combine_eltypes(bc.f, bc.args)
     if !Base.isconcretetype(ElType)
-        @warn "$(ElType) is not concrete, invoke Base.copy"
+        @warn "$(ElType) is not concrete, call Base.copy instead"
         copy(bc)
     end
     mtb_copyto!(similar(bc, ElType), bc, TN)

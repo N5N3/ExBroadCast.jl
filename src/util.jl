@@ -26,7 +26,7 @@ import Base.Broadcast: throwdm, AbstractArrayStyle, Unknown, combine_eltypes,
     dumpbitcache, bitcache_chunks, materialize!, BroadcastStyle, combine_styles, instantiate, 
     broadcastable, broadcast_unalias, Style, _broadcast_getindex, broadcasted
 import Base: size, axes, setindex!, unalias, mightalias, unaliascopy, IndexStyle, parent, 
-    unsafe_setindex!, copyto!, IndexStyle
+    unsafe_setindex!, copyto!, IndexStyle, tail
 const FilledBC = Broadcasted{<:AbstractArrayStyle{0}}
 """
     TupleDummy(arrays::Tuple)
@@ -150,9 +150,7 @@ function eachslice′(A::AbstractArray; dim::Val{D}) where {D}
     Lazy(unsafe_view(A, inds_before..., i, inds_after...) for i in axes(A, D))
 end
 
-import Base: copyto_unaliased!, simd_outer_range, simd_inner_length, simd_index
-
-# IndexCartesian and CartesianIndices has not been defined, only implement Linear to Linear here.
+## faster Base.copyto_unaliased!
 function copyto_unaliased!(::IndexLinear, dest::AbstractArray, ::IndexLinear, src::AbstractArray)
     isempty(src) && return dest
     length(dest) < length(src) && throw(BoundsError(dest, LinearIndices(src)))
@@ -163,16 +161,26 @@ function copyto_unaliased!(::IndexLinear, dest::AbstractArray, ::IndexLinear, sr
     return dest
 end
 
+splitloop(iter::CartesianIndices) = begin
+    indices = iter.indices
+    outer = CartesianIndices(tail(indices))
+    inner = first(indices)
+    outer, inner
+end
+
 function copyto_unaliased!(::IndexLinear, dest::AbstractArray, ::IndexCartesian, src::AbstractArray)
     isempty(src) && return dest
     length(dest) < length(src) && throw(BoundsError(dest, LinearIndices(src)))
-    iter, j = eachindex(src), firstindex(dest) - 1
-    if size(src, 1) >= 16
+    iter, j = CartesianIndices(src), firstindex(dest) - 1
+    inner_len = size(iter, 1)
+    if inner_len >= 16
         # manually expand the inner loop similar to @simd
-        @inbounds for II in simd_outer_range(iter)
+        outer, inner = splitloop(iter)
+        off = firstindex(inner)
+        @inbounds for II in outer
             n = 0
-            while n < simd_inner_length(iter, II)
-                dest[j += 1] = src[simd_index(iter, II, n)]
+            while n < inner_len
+                dest[j += 1] = src[inner[n + off], II]
                 n += 1
             end
         end
@@ -187,24 +195,26 @@ end
 function copyto_unaliased!(::IndexCartesian, dest::AbstractArray, ::IndexLinear, src::AbstractArray)
     isempty(src) && return dest
     length(dest) < length(src) && throw(BoundsError(dest, LinearIndices(src)))
-    iter, i = eachindex(dest), firstindex(src) - 1
-    if size(dest, 1) >= 16
+    iter, i = CartesianIndices(dest), firstindex(src) - 1
+    inner_len = size(iter, 1)
+    if inner_len >= 16
         # manually expand the inner loop similar to @simd
         final = lastindex(src)
-        @inbounds for II in simd_outer_range(iter)
-            n, len = 0, simd_inner_length(iter, II)
-            if i + len < final
-                while n < len
-                    dest[simd_index(iter, II, n)] = src[i += 1]
+        outer, inner = splitloop(iter)
+        off = firstindex(inner)
+        @inbounds for II in outer
+            n = 0
+            if i + inner_len >= final
+                while i < final
+                    dest[inner[n + off], II] = src[i += 1]
                     n += 1
                 end
-                continue
+                break
             end
-            while i < final
-                dest[simd_index(iter, II, n)] = src[i += 1]
+            while n < inner_len
+                dest[inner[n + off], II] = src[i += 1]
                 n += 1
             end
-            break
         end
     elseif length(dest) == length(src)
         for I in iter
@@ -222,16 +232,19 @@ end
 function copyto_unaliased!(::IndexCartesian, dest::AbstractArray, ::IndexCartesian, src::AbstractArray)
     isempty(src) && return dest
     length(dest) < length(src) && throw(BoundsError(dest, LinearIndices(src)))
-    iterdest, itersrc = eachindex(dest), eachindex(src)
+    iterdest, itersrc = CartesianIndices(dest), CartesianIndices(src)
     if iterdest == itersrc
         iter = itersrc
-        if size(src, 1) >= 16
+        inner_len = size(iter, 1)
+        if inner_len >= 16
             # manually expand the inner loop similar to @simd
-            @inbounds for II in simd_outer_range(iter)
+            outer, inner = splitloop(iter)
+            off = firstindex(inner)
+            @inbounds for II in outer
                 n = 0
-                while n < simd_inner_length(iter, II)
-                    I = simd_index(iter, II, n)
-                    dest[I] = src[I]
+                while n < inner_len
+                    n′ = inner[n + off]
+                    dest[n′, II] = src[n′, II]
                     n += 1
                 end
             end
