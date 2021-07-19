@@ -41,17 +41,13 @@ end
     end
     bc′ = preprocess(dest, bc)
     Inds = eachindex(bc′)
-    len, Iᵉ, Iˢs = mtb_config(TN, Inds)
-
-    @inline function broadcast_kernel(Iˢ)
-        Inds′ = @inbounds view(Inds, Iˢ:min(Iˢ + len, Iᵉ))
-        @inbounds @simd for I in Inds′
+    Iˢs, Iᵉ = mtb_config(TN, Inds)
+    mtb_call(Iˢs) do Iˢ
+        Iˡ = Iˢ + step(Iˢs) - 1
+        @inbounds @simd for I in view(Inds, Iˢ:min(Iˡ, Iᵉ))
             dest[I] = bc′[I]
         end
-        nothing
     end
-
-    mtb_call(broadcast_kernel, Iˢs)
     dest
 end
 
@@ -64,27 +60,23 @@ const bitcache_chunks_bits = 6
     destc = dest.chunks
     bc′ = preprocess(dest, bc)
     Inds = eachindex(bc′)
-    len, Iᵉ, Iˢs = mtb_config(TN, Inds, bitcache_size)
-
-    @inline function broadcast_kernel(Iˢ)
+    Iˢs, Iᵉ = mtb_config(TN, Inds, bitcache_size)
+    mtb_call(Iˢs) do Iˢ
         tmp = Vector{Bool}(undef, bitcache_size)
-        cind = 1 + Iˢ >> bitcache_chunks_bits
-        @inbounds Inds′ = view(Inds, Iˢ:min(Iˢ + len, Iᵉ))
-        for P in Iterators.partition(Inds′, bitcache_size)
-            ind = 1
-            @inbounds @simd for I in P
-                tmp[ind] = bc′[I]
-                ind += 1
+        cind = 1 + (Iˢ - first(Iˢs)) >> bitcache_chunks_bits
+        ran = Iˢ:min(Iˢ + step(Iˢs) - 1, Iᵉ)
+        @inbounds for P in Iterators.partition(ran, bitcache_size)
+            ind = 0
+            @simd for I in view(Inds, P)
+                tmp[ind += 1] = bc′[I]
             end
-            @inbounds @simd for i = ind:bitcache_size
-                tmp[i] = false
+            while ind < bitcache_size
+                tmp[ind += 1] = false
             end
             dumpbitcache(destc, cind, tmp)
             cind += bitcache_chunks
         end
-        nothing
     end
-    mtb_call(broadcast_kernel, Iˢs)
     dest
 end
 using Polyester
@@ -123,5 +115,6 @@ end
 @inline function mtb_config(thread_num::Integer, ax::AbstractArray, min_size::Integer = 1)
     Iˢ, Iᵉ = firstindex(ax), lastindex(ax)
     len = cld(length(ax), thread_num * min_size) * min_size
-    len - 1, Iᵉ, Iˢ:len:Iᵉ
+    Iˢs = (0:thread_num-1) .* len .+ Iˢ
+    Iˢs, Iᵉ
 end

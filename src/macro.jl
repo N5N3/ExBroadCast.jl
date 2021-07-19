@@ -63,11 +63,11 @@ end
 function expandbroadcast(ex)
     Meta.isexpr(ex, :call) || return ex
     if ex.args[1] === :broadcast
-        ex.args[1] = :(Base.broadcasted)
-        return :(Base.materialize($ex))
+        ex.args[1] = GlobalRef(Base, :broadcasted)
+        return :($(GlobalRef(Base, :materialize))($ex))
     elseif ex.args[1] === :broadcast!
-        ex′ = Expr(:call, :(Base.broadcasted), ex.args[2], ex.args[4:end]...)
-        return :(Base.materialize!($(ex.args[3]), $ex′))
+        ex′ = Expr(:call, GlobalRef(Base, :broadcasted), ex.args[2], ex.args[4:end]...)
+        return :($(GlobalRef(Base, :materialize!))($(ex.args[3]), $ex′))
     end
     ex
 end
